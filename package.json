@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-parakeet",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "n8n community node for Parakeet (parakeet.cpp / whisper.cpp) — offline speech-to-text using the parakeet-tdt-0.6b-v3 model. Bundles a prebuilt parakeet-cli and auto-downloads the ggml-parakeet-tdt-0.6b-v3-q8_0.bin model.",
   "license": "MIT",
   "homepage": "https://github.com/suneetk92/n8n-nodes-parakeet",
