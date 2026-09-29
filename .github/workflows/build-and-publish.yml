@@ -23,19 +23,22 @@ jobs:
           set -e
           IMG=ghcr.io/ggml-org/whisper.cpp:main
           CID=$(docker create --entrypoint true "$IMG")
-          mkdir -p bin/linux-x64
+          rm -rf bin/linux-x64 && mkdir -p bin/linux-x64
           docker cp "$CID:/app/build/bin/parakeet-cli" bin/linux-x64/
-          for f in libparakeet.so.1.9.4 libggml.so.0.25.1 libggml-base.so.0.25.1 libggml-cpu.so.0.25.1; do
+          # copy ALL versioned .so files (dynamic — adapts to future releases)
+          for f in $(docker cp "$CID:/app/build/bin/." - 2>/dev/null | tar -t 2>/dev/null | grep -oP 'lib[^/]*\.so\.[0-9][^/]*' | sort -u); do
             docker cp "$CID:/app/build/bin/$f" bin/linux-x64/
           done
           docker rm "$CID" >/dev/null
           cd bin/linux-x64
-          ln -sf libparakeet.so.1.9.4 libparakeet.so.1
-          ln -sf libggml.so.0.25.1 libggml.so.0
-          ln -sf libggml-base.so.0.25.1 libggml-base.so.0
-          ln -sf libggml-cpu.so.0.25.1 libggml-cpu.so.0
-          for f in parakeet-cli libparakeet.so.1.9.4 libggml.so.0.25.1 libggml-base.so.0.25.1 libggml-cpu.so.0.25.1; do
-            patchelf --force-rpath --set-rpath '$ORIGIN' "$f"
+          # create soname symlinks dynamically
+          for f in lib*.so.*; do
+            base=$(echo "$f" | sed -E 's/^lib(.+)\.so\.([0-9]+)(\..+)?$/lib\1.so.\2/')
+            [ "$base" != "$f" ] && ln -sf "$f" "$base"
+          done
+          # set rpath on all binaries + libs
+          for f in parakeet-cli lib*.so.*; do
+            patchelf --force-rpath --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
           done
           chmod +x parakeet-cli
           echo "bundled binary set ready:" && ls -la
@@ -71,28 +74,11 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
-      # Re-extract the binary so the published tarball is self-contained.
-      - name: Extract parakeet-cli (linux-x64)
+      # bin/ is committed to the repo (updated by auto-update workflow). Just build + publish.
+      - name: Verify binary present
         run: |
-          set -e
-          IMG=ghcr.io/ggml-org/whisper.cpp:main
-          CID=$(docker create --entrypoint true "$IMG")
-          mkdir -p bin/linux-x64
-          docker cp "$CID:/app/build/bin/parakeet-cli" bin/linux-x64/
-          for f in libparakeet.so.1.9.4 libggml.so.0.25.1 libggml-base.so.0.25.1 libggml-cpu.so.0.25.1; do
-            docker cp "$CID:/app/build/bin/$f" bin/linux-x64/
-          done
-          docker rm "$CID" >/dev/null
-          cd bin/linux-x64
-          ln -sf libparakeet.so.1.9.4 libparakeet.so.1
-          ln -sf libggml.so.0.25.1 libggml.so.0
-          ln -sf libggml-base.so.0.25.1 libggml-base.so.0
-          ln -sf libggml-cpu.so.0.25.1 libggml-cpu.so.0
-          for f in parakeet-cli libparakeet.so.1.9.4 libggml.so.0.25.1 libggml-base.so.0.25.1 libggml-cpu.so.0.25.1; do
-            patchelf --force-rpath --set-rpath '$ORIGIN' "$f"
-          done
-          chmod +x parakeet-cli
-
+          test -x bin/linux-x64/parakeet-cli || { echo "ERROR: bin/linux-x64/parakeet-cli missing" ; exit 1; }
+          ls -la bin/linux-x64/
       - name: Install deps (skip native build)
         run: npm install --ignore-scripts
 

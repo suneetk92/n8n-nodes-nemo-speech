@@ -23,16 +23,14 @@
   },
   "files": [
     "dist",
-    "bin",
-    "scripts"
+    "bin"
   ],
   "main": "dist/nodes/Parakeet/Parakeet.node.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').mkdirSync('dist/icons',{recursive:true});require('fs').copyFileSync('src/icons/parakeet.svg','dist/icons/parakeet.svg')\"",
     "watch": "tsc -w -p tsconfig.json",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "prepack": "npm run build",
-    "postinstall": "node scripts/postinstall.js"
+    "prepack": "npm run build"
   },
   "n8n": {
     "n8nNodesApiVersion": 1,

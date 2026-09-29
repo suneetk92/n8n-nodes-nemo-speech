@@ -15,10 +15,23 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFile, type ExecException } from 'child_process';
 import { promisify } from 'util';
+import * as http from 'http';
+import * as https from 'https';
 
 const execFileAsync = promisify(execFile);
 
 const MODEL_FILENAME = 'ggml-parakeet-tdt-0.6b-v3-q8_0.bin';
+const DEFAULT_MODEL_URL =
+	'https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main/' + MODEL_FILENAME;
+
+/**
+ * Default model location: ~/.n8n/parakeet/models/
+ * This lives inside n8n's standard data volume (PVC in k8s, named volume in Docker),
+ * so the 638 MB model survives pod/container restarts.
+ */
+function defaultModelPath(): string {
+	return path.join(os.homedir(), '.n8n', 'parakeet', 'models', MODEL_FILENAME);
+}
 
 function resolveBinaryPath(): string {
 	const override = process.env.PARAKEET_CLI_PATH;
@@ -28,17 +41,85 @@ function resolveBinaryPath(): string {
 	return path.join(platformDir, exeName);
 }
 
-function resolveModelPath(): string {
-	const override = process.env.PARAKEET_MODEL_PATH;
-	if (override) return override;
-	return path.join(os.homedir(), '.cache', 'n8n-nodes-parakeet', 'models', MODEL_FILENAME);
+/**
+ * npm pack drops symlinks. Scan the bin dir for versioned shared libraries
+ * (lib*.so.<major>[.<minor>...]) and recreate soname → file links so the
+ * dynamic loader resolves DT_NEEDED entries (e.g. libparakeet.so.1 → libparakeet.so.1.9.4).
+ * No hardcoded filenames — works for any future whisper.cpp release.
+ */
+function ensureSymlinks(binDir: string): void {
+	for (const file of fs.readdirSync(binDir)) {
+		const m = file.match(/^lib(.+)\.so\.(\d+)(\..+)?$/);
+		if (!m) continue;
+		const soname = `lib${m[1]}.so.${m[2]}`;
+		if (soname === file) continue;
+		const linkPath = path.join(binDir, soname);
+		try {
+			fs.rmSync(linkPath, { force: true });
+			fs.symlinkSync(file, linkPath);
+		} catch { /* non-fatal */ }
+	}
+}
+/**
+ * Download the model file to `dest` if it doesn't already exist.
+ * Returns the final path. Throws on failure.
+ */
+async function ensureModel(dest: string): Promise<string> {
+	if (fs.existsSync(dest)) return dest;
+	fs.mkdirSync(path.dirname(dest), { recursive: true });
+
+	const url = process.env.PARAKEET_MODEL_URL || DEFAULT_MODEL_URL;
+	const tmp = dest + '.downloading';
+
+	await new Promise<void>((resolve, reject) => {
+		const file = fs.createWriteStream(tmp);
+		const reqMod = url.startsWith('https:') ? https : http;
+		const req = reqMod.get(url, (res) => {
+			if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+				file.close();
+				fs.unlink(tmp, () => {});
+				// follow redirect
+				const follow = (u: string) => {
+					const m = u.startsWith('https:') ? https : http;
+					m.get(u, (r2) => {
+						if (!r2.statusCode || r2.statusCode !== 200) {
+							file.close();
+							reject(new Error(`HTTP ${r2.statusCode} for model download`));
+							r2.resume();
+							return;
+						}
+						r2.pipe(file);
+						file.on('finish', () => file.close(() => resolve()));
+					}).on('error', reject);
+				};
+				follow(res.headers.location);
+				return;
+			}
+			if (!res.statusCode || res.statusCode !== 200) {
+				file.close();
+				reject(new Error(`HTTP ${res.statusCode} for model download`));
+				res.resume();
+				return;
+			}
+			res.pipe(file);
+			file.on('finish', () => file.close(() => resolve()));
+		});
+		req.on('error', (e) => {
+			file.close();
+			fs.unlink(tmp, () => {});
+			reject(e);
+		});
+	});
+
+	fs.renameSync(tmp, dest);
+	return dest;
 }
 
 export class Parakeet implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Parakeet (Speech to Text)',
 		name: 'parakeet',
-		icon: 'fa:feather-alt',
+		icon: 'file:../../icons/parakeet.svg',
 		group: ['transform'],
 		version: 1,
 		description:
@@ -156,16 +237,18 @@ export class Parakeet implements INodeType {
 		if (!fs.existsSync(binaryPath)) {
 			throw new NodeOperationError(
 				node,
-				`parakeet-cli binary not found at "${binaryPath}". Run "npm install" (postinstall) or set PARAKEET_CLI_PATH.`,
+				`parakeet-cli binary not found at "${binaryPath}". The package ships a linux-x64 binary; set PARAKEET_CLI_PATH to override.`,
 			);
 		}
-
+		ensureSymlinks(path.dirname(binaryPath));
 		const modelParam = this.getNodeParameter('modelPath', 0) as string;
-		const modelPath = modelParam || resolveModelPath();
-		if (!fs.existsSync(modelPath)) {
+		const modelPath = modelParam || defaultModelPath();
+		try {
+			await ensureModel(modelPath);
+		} catch (e) {
 			throw new NodeOperationError(
 				node,
-				`Model not found at "${modelPath}". It is normally downloaded on install. Set PARAKEET_MODEL_PATH or re-run the install.`,
+				`Failed to download model to "${modelPath}": ${(e as Error).message}. Set PARAKEET_MODEL_PATH to a local .bin file.`,
 			);
 		}
 
