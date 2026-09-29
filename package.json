@@ -1,0 +1,51 @@
+{
+  "name": "n8n-nodes-parakeet",
+  "version": "1.0.0",
+  "description": "n8n community node for Parakeet (parakeet.cpp / whisper.cpp) — offline speech-to-text using the parakeet-tdt-0.6b-v3 model. Bundles a prebuilt parakeet-cli and auto-downloads the ggml-parakeet-tdt-0.6b-v3-q8_0.bin model.",
+  "license": "MIT",
+  "homepage": "https://github.com/suneetk92/n8n-nodes-parakeet",
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n",
+    "parakeet",
+    "whisper.cpp",
+    "speech-to-text",
+    "transcription",
+    "asr",
+    "ggml"
+  ],
+  "author": {
+    "name": "Suneet Kumar"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/suneetk92/n8n-nodes-parakeet.git"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "scripts"
+  ],
+  "main": "dist/nodes/Parakeet/Parakeet.node.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -w -p tsconfig.json",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prepack": "npm run build",
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "nodes": [
+      "dist/nodes/Parakeet/Parakeet.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "n8n-workflow": "*",
+    "typescript": "^5.5.0"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}
