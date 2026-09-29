@@ -29,18 +29,15 @@ jobs:
           for f in $(docker cp "$CID:/app/build/bin/." - 2>/dev/null | tar -t 2>/dev/null | grep -oP 'lib[^/]*\.so\.[0-9][^/]*' | sort -u); do
             docker cp "$CID:/app/build/bin/$f" "$OUT/"
           done
-          # 2) ldd inside the container to find ALL shared-lib deps (catches libgomp, libstdc++, etc.)
-          LDD_OUT=$(docker run --rm --entrypoint ldd "$IMG" /app/build/bin/parakeet-cli 2>/dev/null || true)
-          echo "$LDD_OUT" | grep '=>' | while IFS= read -r line; do
-            so=$(echo "$line" | awk '{print $1}')
-            [ -z "$so" ] && continue
-            [ -f "$OUT/$so" ] && continue
-            case "$so" in libc.so.*|libm.so.*|ld-linux*|linux-vdso*) continue;; esac
-            fullpath=$(echo "$line" | awk '{print $3}')
-            if [ -n "$fullpath" ]; then
-              docker run --rm --entrypoint cat "$IMG" "$fullpath" > "$OUT/$so" && echo "  copied dep: $so"
-            fi
-          done
+          # 2) Copy libgomp.so.1 (OpenMP runtime — missing from slim/base images).
+          #    Do NOT copy libstdc++/libgcc_s: they exist in the target container and
+          #    bundling newer versions causes glibc symbol conflicts.
+          GOMP_PATH=$(docker run --rm --entrypoint ldd "$IMG" /app/build/bin/parakeet-cli 2>/dev/null \
+            | grep 'libgomp' | awk '{print $3}' || true)
+          if [ -n "$GOMP_PATH" ]; then
+            docker run --rm --entrypoint cat "$IMG" "$GOMP_PATH" > "$OUT/libgomp.so.1" \
+              && echo "  copied dep: libgomp.so.1"
+          fi
           docker rm "$CID" >/dev/null
           cd "$OUT"
           # 3) create soname symlinks for ALL .so files (including newly copied deps)
@@ -90,17 +87,12 @@ jobs:
           for f in $(docker cp "$CID:/app/build/bin/." - 2>/dev/null | tar -t 2>/dev/null | grep -oP 'lib[^/]*\.so\.[0-9][^/]*' | sort -u); do
             docker cp "$CID:/app/build/bin/$f" "$OUT/"
           done
-          LDD_OUT=$(docker run --rm --entrypoint ldd "$IMG" /app/build/bin/parakeet-cli 2>/dev/null || true)
-          echo "$LDD_OUT" | grep '=>' | while IFS= read -r line; do
-            so=$(echo "$line" | awk '{print $1}')
-            [ -z "$so" ] && continue
-            [ -f "$OUT/$so" ] && continue
-            case "$so" in libc.so.*|libm.so.*|ld-linux*|linux-vdso*) continue;; esac
-            fullpath=$(echo "$line" | awk '{print $3}')
-            if [ -n "$fullpath" ]; then
-              docker run --rm --entrypoint cat "$IMG" "$fullpath" > "$OUT/$so" && echo "  copied dep: $so"
-            fi
-          done
+          GOMP_PATH=$(docker run --rm --entrypoint ldd "$IMG" /app/build/bin/parakeet-cli 2>/dev/null \
+            | grep 'libgomp' | awk '{print $3}' || true)
+          if [ -n "$GOMP_PATH" ]; then
+            docker run --rm --entrypoint cat "$IMG" "$GOMP_PATH" > "$OUT/libgomp.so.1" \
+              && echo "  copied dep: libgomp.so.1"
+          fi
           docker rm "$CID" >/dev/null
           cd "$OUT"
           for f in lib*.so.*; do
