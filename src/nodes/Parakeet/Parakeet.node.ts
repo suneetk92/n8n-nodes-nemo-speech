@@ -61,8 +61,33 @@ function ensureSymlinks(binDir: string): void {
 	}
 }
 /**
- * Download the model file to `dest` if it doesn't already exist.
- * Returns the final path. Throws on failure.
+ * Resolve a URL through redirects (no body) to its final location.
+ */
+function resolveFinalUrl(url: string, attempt = 0): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reqMod = url.startsWith('https:') ? https : http;
+		const req = reqMod.get(url, (res) => {
+			const status = res.statusCode ?? 0;
+			if (status >= 300 && status < 400 && res.headers.location) {
+				res.resume();
+				if (attempt > 5) return reject(new Error('Too many redirects'));
+				resolveFinalUrl(res.headers.location, attempt + 1).then(resolve, reject);
+				return;
+			}
+			if (status !== 200) {
+				res.resume();
+				reject(new Error(`HTTP ${status}`));
+				return;
+			}
+			resolve(url);
+		});
+		req.on('error', reject);
+	});
+}
+
+/**
+ * Download `url` to `dest` if it doesn't already exist. Follows redirects
+ * (HuggingFace resolve -> CDN). Returns the final path.
  */
 async function ensureModel(dest: string): Promise<string> {
 	if (fs.existsSync(dest)) return dest;
@@ -71,42 +96,24 @@ async function ensureModel(dest: string): Promise<string> {
 	const url = process.env.PARAKEET_MODEL_URL || DEFAULT_MODEL_URL;
 	const tmp = dest + '.downloading';
 
+	// Resolve redirects first so the body download is a single clean stream.
+	const finalUrl = await resolveFinalUrl(url);
+
 	await new Promise<void>((resolve, reject) => {
 		const file = fs.createWriteStream(tmp);
-		const reqMod = url.startsWith('https:') ? https : http;
-		const req = reqMod.get(url, (res) => {
-			if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-				file.close();
-				fs.unlink(tmp, () => {});
-				// follow redirect
-				const follow = (u: string) => {
-					const m = u.startsWith('https:') ? https : http;
-					m.get(u, (r2) => {
-						if (!r2.statusCode || r2.statusCode !== 200) {
-							file.close();
-							reject(new Error(`HTTP ${r2.statusCode} for model download`));
-							r2.resume();
-							return;
-						}
-						r2.pipe(file);
-						file.on('finish', () => file.close(() => resolve()));
-					}).on('error', reject);
-				};
-				follow(res.headers.location);
-				return;
-			}
-			if (!res.statusCode || res.statusCode !== 200) {
-				file.close();
-				reject(new Error(`HTTP ${res.statusCode} for model download`));
+		const reqMod = finalUrl.startsWith('https:') ? https : http;
+		const req = reqMod.get(finalUrl, (res) => {
+			if ((res.statusCode ?? 0) !== 200) {
 				res.resume();
+				file.close(() => fs.unlink(tmp, () => {}));
+				reject(new Error(`HTTP ${res.statusCode} downloading model`));
 				return;
 			}
 			res.pipe(file);
 			file.on('finish', () => file.close(() => resolve()));
 		});
 		req.on('error', (e) => {
-			file.close();
-			fs.unlink(tmp, () => {});
+			file.close(() => fs.unlink(tmp, () => {}));
 			reject(e);
 		});
 	});
