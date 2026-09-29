@@ -3,7 +3,7 @@ name: Build & Publish
 on:
   push:
     branches: [main]
-    tags: ['v*']
+  tags: ['v*']
   pull_request:
 
 jobs:
@@ -12,45 +12,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Build a fully static parakeet-cli from whisper.cpp source.
+      # A static glibc binary has zero runtime shared-lib dependencies, so it
+      # runs on both glibc and musl (Alpine) targets — including the official
+      # n8n Docker image (n8nio/n8n, Alpine-based).
+      - name: Build static parakeet-cli (linux-x64)
+        run: |
+          set -e
+          OUT=/tmp/bin/linux-x64
+          rm -rf /tmp/bin && mkdir -p "$OUT"
+          docker run --rm -v /tmp/bin:/out debian:bookworm-slim bash -c '
+            set -e
+            apt-get update -qq >/dev/null
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential cmake git 2>&1 | tail -1
+            cd /tmp
+            git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git src
+            cd src
+            mkdir -p build && cd build
+            cmake .. \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DGGML_STATIC=ON \
+              -DCMAKE_EXE_LINKER_FLAGS="-static" \
+              -DCMAKE_POSITION_INDEPENDENT_CODE=OFF
+            make parakeet-cli -j$(nproc)
+            cp bin/parakeet-cli /out/linux-x64/
+            chmod +x /out/linux-x64/parakeet-cli
+          '
+          echo "=== bundle ===" && ls -la "$OUT"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      # Extract the prebuilt parakeet-cli + libs from the official whisper.cpp main image.
-      - name: Extract parakeet-cli (linux-x64)
-        run: |
-          set -e
-          IMG=ghcr.io/ggml-org/whisper.cpp:main
-          CID=$(docker create --entrypoint true "$IMG")
-          OUT=/tmp/bin/linux-x64
-          rm -rf /tmp/bin && mkdir -p "$OUT"
-          # 1) copy parakeet-cli + all versioned .so from the build dir
-          docker cp "$CID:/app/build/bin/parakeet-cli" "$OUT/"
-          for f in $(docker cp "$CID:/app/build/bin/." - 2>/dev/null | tar -t 2>/dev/null | grep -oP 'lib[^/]*\.so\.[0-9][^/]*' | sort -u); do
-            docker cp "$CID:/app/build/bin/$f" "$OUT/"
-          done
-          # 2) Copy libgomp.so.1 (OpenMP runtime — missing from slim/base images).
-          #    Do NOT copy libstdc++/libgcc_s: they exist in the target container and
-          #    bundling newer versions causes glibc symbol conflicts.
-          GOMP_PATH=$(docker run --rm --entrypoint ldd "$IMG" /app/build/bin/parakeet-cli 2>/dev/null \
-            | grep 'libgomp' | awk '{print $3}' || true)
-          if [ -n "$GOMP_PATH" ]; then
-            docker run --rm --entrypoint cat "$IMG" "$GOMP_PATH" > "$OUT/libgomp.so.1" \
-              && echo "  copied dep: libgomp.so.1"
-          fi
-          docker rm "$CID" >/dev/null
-          cd "$OUT"
-          # 3) create soname symlinks for ALL .so files (including newly copied deps)
-          for f in lib*.so.*; do
-            base=$(echo "$f" | sed -E 's/^lib(.+)\.so\.([0-9]+)(\..+)?$/lib\1.so.\2/')
-            [ "$base" != "$f" ] && ln -sf "$f" "$base"
-          done
-          # 4) set rpath on binary + all libs
-          for f in parakeet-cli lib*.so.*; do
-            patchelf --force-rpath --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
-          done
-          chmod +x parakeet-cli
-          echo "=== bundle contents ===" && ls -la
 
       - name: Install deps (skip native build)
         run: npm install --ignore-scripts
@@ -76,33 +69,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract parakeet-cli (linux-x64)
+      - name: Build static parakeet-cli (linux-x64)
         run: |
           set -e
-          IMG=ghcr.io/ggml-org/whisper.cpp:main
-          CID=$(docker create --entrypoint true "$IMG")
           OUT=/tmp/bin/linux-x64
           rm -rf /tmp/bin && mkdir -p "$OUT"
-          docker cp "$CID:/app/build/bin/parakeet-cli" "$OUT/"
-          for f in $(docker cp "$CID:/app/build/bin/." - 2>/dev/null | tar -t 2>/dev/null | grep -oP 'lib[^/]*\.so\.[0-9][^/]*' | sort -u); do
-            docker cp "$CID:/app/build/bin/$f" "$OUT/"
-          done
-          GOMP_PATH=$(docker run --rm --entrypoint ldd "$IMG" /app/build/bin/parakeet-cli 2>/dev/null \
-            | grep 'libgomp' | awk '{print $3}' || true)
-          if [ -n "$GOMP_PATH" ]; then
-            docker run --rm --entrypoint cat "$IMG" "$GOMP_PATH" > "$OUT/libgomp.so.1" \
-              && echo "  copied dep: libgomp.so.1"
-          fi
-          docker rm "$CID" >/dev/null
-          cd "$OUT"
-          for f in lib*.so.*; do
-            base=$(echo "$f" | sed -E 's/^lib(.+)\.so\.([0-9]+)(\..+)?$/lib\1.so.\2/')
-            [ "$base" != "$f" ] && ln -sf "$f" "$base"
-          done
-          for f in parakeet-cli lib*.so.*; do
-            patchelf --force-rpath --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
-          done
-          chmod +x parakeet-cli
+          docker run --rm -v /tmp/bin:/out debian:bookworm-slim bash -c '
+            set -e
+            apt-get update -qq >/dev/null
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential cmake git 2>&1 | tail -1
+            cd /tmp
+            git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git src
+            cd src
+            mkdir -p build && cd build
+            cmake .. \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DGGML_STATIC=ON \
+              -DCMAKE_EXE_LINKER_FLAGS="-static" \
+              -DCMAKE_POSITION_INDEPENDENT_CODE=OFF
+            make parakeet-cli -j$(nproc)
+            cp bin/parakeet-cli /out/linux-x64/
+            chmod +x /out/linux-x64/parakeet-cli
+          '
 
       - name: Package as tarball
         run: |
