@@ -73,13 +73,21 @@ async function ensureBinary(): Promise<string> {
 	const binDir = path.join(CACHE_DIR, 'bin', platform);
 	const exeName = process.platform === 'win32' ? 'parakeet-cli.exe' : 'parakeet-cli';
 	const binPath = path.join(binDir, exeName);
-	if (fs.existsSync(binPath)) {
-		ensureSymlinks(binDir);
-		return binPath;
+	const versionMarker = path.join(binDir, '.version');
+	const pkgVersion = require(path.join(__dirname, '..', '..', '..', 'package.json')).version as string;
+
+	if (fs.existsSync(binPath) && fs.existsSync(versionMarker)) {
+		// Re-download if the cached binary is from an older package version.
+		const cachedVersion = fs.readFileSync(versionMarker, 'utf-8').trim();
+		if (cachedVersion === pkgVersion) {
+			ensureSymlinks(binDir);
+			return binPath;
+		}
+		// Stale cache — wipe and re-download below.
+		fs.rmSync(binDir, { recursive: true, force: true });
 	}
 
-	const version = require(path.join(__dirname, '..', '..', '..', 'package.json')).version as string;
-	const url = `https://github.com/suneetk92/n8n-nodes-parakeet/releases/download/v${version}/parakeet-cli-${platform}.tar.gz`;
+	const url = `https://github.com/suneetk92/n8n-nodes-parakeet/releases/download/v${pkgVersion}/parakeet-cli-${platform}.tar.gz`;
 	fs.mkdirSync(binDir, { recursive: true });
 	const tmp = path.join(CACHE_DIR, `bin-${platform}.tar.gz`);
 
@@ -91,6 +99,7 @@ async function ensureBinary(): Promise<string> {
 
 	try { fs.chmodSync(binPath, 0o755); } catch { /* non-fatal */ }
 	ensureSymlinks(binDir);
+	fs.writeFileSync(versionMarker, pkgVersion);
 	return binPath;
 }
 
