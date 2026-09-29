@@ -13,7 +13,7 @@ import type {
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { execFile, type ExecException } from 'child_process';
+import { execFile, execFileSync, type ExecException } from 'child_process';
 import { promisify } from 'util';
 import * as http from 'http';
 import * as https from 'https';
@@ -25,20 +25,73 @@ const DEFAULT_MODEL_URL =
 	'https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main/' + MODEL_FILENAME;
 
 /**
- * Default model location: ~/.n8n/parakeet/models/
- * This lives inside n8n's standard data volume (PVC in k8s, named volume in Docker),
- * so the 638 MB model survives pod/container restarts.
+ * n8n's standard data volume (PVC in k8s, named volume in Docker).
+ * Both the model and the binary cache here so they survive restarts.
  */
+const CACHE_DIR = path.join(os.homedir(), '.n8n', 'parakeet');
+
 function defaultModelPath(): string {
-	return path.join(os.homedir(), '.n8n', 'parakeet', 'models', MODEL_FILENAME);
+	return path.join(CACHE_DIR, 'models', MODEL_FILENAME);
 }
 
-function resolveBinaryPath(): string {
+/** Follow redirects and stream `url` to `dest`. */
+async function downloadFile(url: string, dest: string): Promise<void> {
+	const finalUrl = await resolveFinalUrl(url);
+	await new Promise<void>((resolve, reject) => {
+		const file = fs.createWriteStream(dest);
+		const reqMod = finalUrl.startsWith('https:') ? https : http;
+		const req = reqMod.get(finalUrl, (res) => {
+			if ((res.statusCode ?? 0) !== 200) {
+				res.resume();
+				file.close(() => fs.unlink(dest, () => {}));
+				reject(new Error(`HTTP ${res.statusCode} downloading ${url}`));
+				return;
+			}
+			res.pipe(file);
+			file.on('finish', () => file.close(() => resolve()));
+		});
+		req.on('error', (e) => {
+			file.close(() => fs.unlink(dest, () => {}));
+			reject(e);
+		});
+	});
+}
+
+/** Extract a .tar.gz into `destDir`. */
+function extractTarGz(archive: string, destDir: string): void {
+	execFileSync('tar', ['-xzf', archive, '-C', destDir], { stdio: 'pipe' });
+}
+/**
+ * Ensure the parakeet-cli binary is available. Checks the local cache first;
+ * if missing, downloads the platform tarball from GitHub Releases and extracts it.
+ */
+async function ensureBinary(): Promise<string> {
 	const override = process.env.PARAKEET_CLI_PATH;
 	if (override && fs.existsSync(override)) return override;
-	const platformDir = path.join(__dirname, '..', '..', '..', 'bin', `${process.platform}-${process.arch}`);
+
+	const platform = `${process.platform}-${process.arch}`;
+	const binDir = path.join(CACHE_DIR, 'bin', platform);
 	const exeName = process.platform === 'win32' ? 'parakeet-cli.exe' : 'parakeet-cli';
-	return path.join(platformDir, exeName);
+	const binPath = path.join(binDir, exeName);
+	if (fs.existsSync(binPath)) {
+		ensureSymlinks(binDir);
+		return binPath;
+	}
+
+	const version = require(path.join(__dirname, '..', '..', '..', 'package.json')).version as string;
+	const url = `https://github.com/suneetk92/n8n-nodes-parakeet/releases/download/v${version}/parakeet-cli-${platform}.tar.gz`;
+	fs.mkdirSync(binDir, { recursive: true });
+	const tmp = path.join(CACHE_DIR, `bin-${platform}.tar.gz`);
+
+	await downloadFile(url, tmp);
+	// The tarball's top-level entry is the platform folder (e.g. linux-x64/), so extract
+	// into its parent and the files land directly in binDir.
+	extractTarGz(tmp, path.dirname(binDir));
+	fs.unlinkSync(tmp);
+
+	try { fs.chmodSync(binPath, 0o755); } catch { /* non-fatal */ }
+	ensureSymlinks(binDir);
+	return binPath;
 }
 
 /**
@@ -240,15 +293,17 @@ export class Parakeet implements INodeType {
 		const items = this.getInputData();
 		const node = this.getNode();
 
-		const binaryPath = resolveBinaryPath();
-		if (!fs.existsSync(binaryPath)) {
+		let binaryPath: string;
+		try {
+			binaryPath = await ensureBinary();
+		} catch (e) {
 			throw new NodeOperationError(
 				node,
-				`parakeet-cli binary not found at "${binaryPath}". The package ships a linux-x64 binary; set PARAKEET_CLI_PATH to override.`,
+				`Failed to obtain parakeet-cli binary: ${(e as Error).message}. Set PARAKEET_CLI_PATH to a local binary.`,
 			);
 		}
 		ensureSymlinks(path.dirname(binaryPath));
-		const modelParam = this.getNodeParameter('modelPath', 0) as string;
+		const modelParam = (this.getNodeParameter('modelPath', 0, '') as string) || '';
 		const modelPath = modelParam || defaultModelPath();
 		try {
 			await ensureModel(modelPath);
@@ -259,9 +314,9 @@ export class Parakeet implements INodeType {
 			);
 		}
 
-		const options = (this.getNodeParameter('options', 0) as IDataObject) || {};
-		const inputType = (this.getNodeParameter('inputType', 0) as string) || 'binary';
-		const binaryProperty = (this.getNodeParameter('binaryProperty', 0) as string) || 'data';
+		const options = (this.getNodeParameter('options', 0, {}) as IDataObject) || {};
+		const inputType = (this.getNodeParameter('inputType', 0, 'binary') as string) || 'binary';
+		const binaryProperty = (this.getNodeParameter('binaryProperty', 0, 'data') as string) || 'data';
 
 		const results: INodeExecutionData[] = [];
 
@@ -271,7 +326,7 @@ export class Parakeet implements INodeType {
 			// Resolve the audio to a local temp file.
 			let tmpAudio: string;
 			if (inputType === 'url') {
-				const url = this.getNodeParameter('audioUrl', i) as string;
+				const url = (this.getNodeParameter('audioUrl', i, '') as string) || '';
 				const buf = Buffer.from(await this.helpers.httpRequest({ url, encoding: 'arraybuffer' }));
 				tmpAudio = path.join(os.tmpdir(), `parakeet-in-${Date.now()}-${i}.wav`);
 				fs.writeFileSync(tmpAudio, buf);
@@ -326,7 +381,7 @@ export class Parakeet implements INodeType {
 				json: {
 					text: transcript,
 					model: path.basename(modelPath),
-					input: inputType === 'url' ? (this.getNodeParameter('audioUrl', i) as string) : binaryProperty,
+					input: inputType === 'url' ? (this.getNodeParameter('audioUrl', i, '') as string) : binaryProperty,
 				},
 			};
 

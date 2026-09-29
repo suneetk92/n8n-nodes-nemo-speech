@@ -20,7 +20,6 @@ jobs:
         id: digest
         run: |
           DIGEST=$(docker pull ghcr.io/ggml-org/whisper.cpp:main 2>&1 | grep -oP 'digest: \K[a-f0-9]+' || true)
-          # fallback: use docker inspect
           if [ -z "$DIGEST" ]; then
             docker pull -q ghcr.io/ggml-org/whisper.cpp:main >/dev/null 2>&1
             DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/ggml-org/whisper.cpp:main | cut -d'@' -f2)
@@ -40,43 +39,12 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Extract new binary + libs
-        if: steps.compare.outputs.changed == 'true'
-        run: |
-          set -e
-          CID=$(docker create --entrypoint true ghcr.io/ggml-org/whisper.cpp:main)
-          rm -rf bin/linux-x64 && mkdir -p bin/linux-x64
-          docker cp "$CID:/app/build/bin/parakeet-cli" bin/linux-x64/
-          # copy ALL versioned .so files (dynamic — adapts to future releases)
-          for f in $(docker cp "$CID:/app/build/bin/." - 2>/dev/null | tar -t 2>/dev/null | grep -oP 'lib[^/]*\.so\.[0-9][^/]*' | sort -u); do
-            docker cp "$CID:/app/build/bin/$f" bin/linux-x64/
-          done
-          docker rm "$CID" >/dev/null
-          cd bin/linux-x64
-          # create soname symlinks dynamically
-          for f in lib*.so.*; do
-            base=$(echo "$f" | sed -E 's/^lib(.+)\.so\.([0-9]+)(\..+)?$/lib\1.so.\2/')
-            [ "$base" != "$f" ] && ln -sf "$f" "$base"
-          done
-          # set rpath on all binaries + libs
-          for f in parakeet-cli lib*.so.*; do
-            patchelf --force-rpath --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
-          done
-          chmod +x parakeet-cli
-          echo "New binary set:" && ls -la
-
-      - name: Save digest
-        if: steps.compare.outputs.changed == 'true'
-        run: |
-          echo "${{ steps.digest.outputs.digest }}" > .last-image-digest
-
       - name: Bump version + commit + tag
         if: steps.compare.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          # bump patch version in package.json
           CURRENT=$(node -p "require('./package.json').version")
           MAJOR=${CURRENT%%.*}
           REST=${CURRENT#*.}
@@ -85,14 +53,15 @@ jobs:
           NEW_PATCH=$((PATCH + 1))
           NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
           sed -i "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" package.json
+          echo "${{ steps.digest.outputs.digest }}" > .last-image-digest
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add bin/ .last-image-digest package.json
-          git commit -m "chore: update parakeet-cli from whisper.cpp main (${GITHUB_SHA:0:7})
+          git add .last-image-digest package.json
+          git commit -m "chore: bump to $NEW_VERSION (whisper.cpp main digest changed)
 
 Image digest: ${{ steps.digest.outputs.digest }}"
           git push origin main
-          # tag triggers the Build & Publish workflow
+          # tag triggers the Build & Publish workflow (extracts binary, publishes release asset + npm)
           git tag "v$NEW_VERSION"
           git push origin "v$NEW_VERSION"
-          echo "Published v$NEW_VERSION"
+          echo "Tagged v$NEW_VERSION — Build & Publish will extract + publish."

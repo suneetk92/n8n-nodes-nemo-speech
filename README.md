@@ -15,12 +15,13 @@ n8n add-nodes n8n-nodes-parakeet
 docker exec -it <n8n> n8n nodes:install n8n-nodes-parakeet
 ```
 
-On install the node's `postinstall` step:
-1. marks the bundled `parakeet-cli` executable, and
-2. downloads the ~638 MB model to `~/.cache/n8n-nodes-parakeet/models/ggml-parakeet-tdt-0.6b-v3-q8_0.bin`.
+On first run the node self-heals (no `postinstall`):
+1. downloads the ~3 MB `parakeet-cli` + shared libraries to `~/.n8n/parakeet/bin/<platform>-<arch>/`, and
+2. downloads the ~638 MB model to `~/.n8n/parakeet/models/ggml-parakeet-tdt-0.6b-v3-q8_0.bin`.
 
-> The 638 MB model is **not** shipped in the npm package (too large). It is fetched once and
-> cached. To use a local copy instead, set `PARAKEET_MODEL_PATH` to your `.bin` file.
+> Neither the binary nor the model is shipped in the npm package. Both are fetched once and
+> cached under n8n's standard data volume (`~/.n8n`), so they survive container/pod restarts.
+> To use local copies instead, set `PARAKEET_CLI_PATH` / `PARAKEET_MODEL_PATH`.
 
 ## Node inputs
 
@@ -61,16 +62,21 @@ With **Write Text File** enabled, a `transcript` binary property (the `.txt`) is
 | Variable | Purpose |
 |---|---|
 | `PARAKEET_MODEL_PATH` | Use this exact `.bin` file; skips the auto-download. |
-| `PARAKEET_CLI_PATH` | Override the bundled `parakeet-cli` location. |
+| `PARAKEET_CLI_PATH` | Use this exact `parakeet-cli` binary; skips the auto-download. |
 | `PARAKEET_MODEL_URL` | Override the model download URL. |
-| `PARAKEET_NO_MODEL=1` | Skip the model download entirely (bring your own via `PARAKEET_MODEL_PATH`). |
 
-## Bundled binary
+## Binary + model (runtime download)
 
-The package ships a self-contained, prebuilt `parakeet-cli` + its `libparakeet`/`libggml` shared
-libraries under `bin/<platform>-<arch>/` (currently `linux-x64`). The binary uses `$ORIGIN` rpath
-so it runs with no `LD_LIBRARY_PATH`. It is extracted from the official
-`ghcr.io/ggml-org/whisper.cpp:main` Docker image — see `.github/workflows/build-binaries.yml`.
+The npm package contains **no** binaries or weights. On first run the node downloads:
+
+- `parakeet-cli` + its `libparakeet`/`libggml` shared libraries (~3 MB) from a GitHub Release
+  asset, extracted to `~/.n8n/parakeet/bin/<platform>-<arch>/`. The binary uses `$ORIGIN` rpath
+  so it runs with no `LD_LIBRARY_PATH`.
+- the ~638 MB model from Hugging Face to `~/.n8n/parakeet/models/`.
+
+Both live under n8n's standard data volume, so they survive container/pod restarts. The binary
+is extracted from the official `ghcr.io/ggml-org/whisper.cpp:main` Docker image by
+`.github/workflows/build-and-publish.yml` (a new GitHub Release is cut per tag).
 
 ## Build from source
 
@@ -82,5 +88,5 @@ node smoke.test.js             # end-to-end smoke test (needs model + jfk.wav)
 
 ## License
 
-MIT. The bundled `parakeet-cli` binary and the Parakeet model are subject to their respective
+MIT. The `parakeet-cli` binary and the Parakeet model are subject to their respective
 licenses (whisper.cpp / Parakeet).
