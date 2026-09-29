@@ -22,22 +22,38 @@ jobs:
           set -e
           IMG=ghcr.io/ggml-org/whisper.cpp:main
           CID=$(docker create --entrypoint true "$IMG")
-          rm -rf /tmp/bin/linux-x64 && mkdir -p /tmp/bin/linux-x64
-          docker cp "$CID:/app/build/bin/parakeet-cli" /tmp/bin/linux-x64/
+          OUT=/tmp/bin/linux-x64
+          rm -rf /tmp/bin && mkdir -p "$OUT"
+          # 1) copy parakeet-cli + all versioned .so from the build dir
+          docker cp "$CID:/app/build/bin/parakeet-cli" "$OUT/"
           for f in $(docker cp "$CID:/app/build/bin/." - 2>/dev/null | tar -t 2>/dev/null | grep -oP 'lib[^/]*\.so\.[0-9][^/]*' | sort -u); do
-            docker cp "$CID:/app/build/bin/$f" /tmp/bin/linux-x64/
+            docker cp "$CID:/app/build/bin/$f" "$OUT/"
+          done
+          # 2) ldd inside the container to find ALL shared-lib deps (catches libgomp, libstdc++, etc.)
+          LDD_OUT=$(docker run --rm --entrypoint ldd "$IMG" /app/build/bin/parakeet-cli 2>/dev/null || true)
+          echo "$LDD_OUT" | grep '=>' | while IFS= read -r line; do
+            so=$(echo "$line" | awk '{print $1}')
+            [ -z "$so" ] && continue
+            [ -f "$OUT/$so" ] && continue
+            case "$so" in libc.so.*|libm.so.*|ld-linux*|linux-vdso*) continue;; esac
+            fullpath=$(echo "$line" | awk '{print $3}')
+            if [ -n "$fullpath" ]; then
+              docker run --rm --entrypoint cat "$IMG" "$fullpath" > "$OUT/$so" && echo "  copied dep: $so"
+            fi
           done
           docker rm "$CID" >/dev/null
-          cd /tmp/bin/linux-x64
+          cd "$OUT"
+          # 3) create soname symlinks for ALL .so files (including newly copied deps)
           for f in lib*.so.*; do
             base=$(echo "$f" | sed -E 's/^lib(.+)\.so\.([0-9]+)(\..+)?$/lib\1.so.\2/')
             [ "$base" != "$f" ] && ln -sf "$f" "$base"
           done
+          # 4) set rpath on binary + all libs
           for f in parakeet-cli lib*.so.*; do
             patchelf --force-rpath --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
           done
           chmod +x parakeet-cli
-          ls -la
+          echo "=== bundle contents ===" && ls -la
 
       - name: Install deps (skip native build)
         run: npm install --ignore-scripts
@@ -68,12 +84,25 @@ jobs:
           set -e
           IMG=ghcr.io/ggml-org/whisper.cpp:main
           CID=$(docker create --entrypoint true "$IMG")
-          rm -rf /tmp/bin/linux-x64 && mkdir -p /tmp/bin/linux-x64
-          docker cp "$CID:/app/build/bin/parakeet-cli" /tmp/bin/linux-x64/
+          OUT=/tmp/bin/linux-x64
+          rm -rf /tmp/bin && mkdir -p "$OUT"
+          docker cp "$CID:/app/build/bin/parakeet-cli" "$OUT/"
           for f in $(docker cp "$CID:/app/build/bin/." - 2>/dev/null | tar -t 2>/dev/null | grep -oP 'lib[^/]*\.so\.[0-9][^/]*' | sort -u); do
-            docker cp "$CID:/app/build/bin/$f" /tmp/bin/linux-x64/
+            docker cp "$CID:/app/build/bin/$f" "$OUT/"
           done
-          cd /tmp/bin/linux-x64
+          LDD_OUT=$(docker run --rm --entrypoint ldd "$IMG" /app/build/bin/parakeet-cli 2>/dev/null || true)
+          echo "$LDD_OUT" | grep '=>' | while IFS= read -r line; do
+            so=$(echo "$line" | awk '{print $1}')
+            [ -z "$so" ] && continue
+            [ -f "$OUT/$so" ] && continue
+            case "$so" in libc.so.*|libm.so.*|ld-linux*|linux-vdso*) continue;; esac
+            fullpath=$(echo "$line" | awk '{print $3}')
+            if [ -n "$fullpath" ]; then
+              docker run --rm --entrypoint cat "$IMG" "$fullpath" > "$OUT/$so" && echo "  copied dep: $so"
+            fi
+          done
+          docker rm "$CID" >/dev/null
+          cd "$OUT"
           for f in lib*.so.*; do
             base=$(echo "$f" | sed -E 's/^lib(.+)\.so\.([0-9]+)(\..+)?$/lib\1.so.\2/')
             [ "$base" != "$f" ] && ln -sf "$f" "$base"
