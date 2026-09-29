@@ -73,7 +73,6 @@ jobs:
           for f in $(docker cp "$CID:/app/build/bin/." - 2>/dev/null | tar -t 2>/dev/null | grep -oP 'lib[^/]*\.so\.[0-9][^/]*' | sort -u); do
             docker cp "$CID:/app/build/bin/$f" /tmp/bin/linux-x64/
           done
-          rm -rf /tmp/bin/linux-x64 && mkdir -p /tmp/bin/linux-x64
           cd /tmp/bin/linux-x64
           for f in lib*.so.*; do
             base=$(echo "$f" | sed -E 's/^lib(.+)\.so\.([0-9]+)(\..+)?$/lib\1.so.\2/')
