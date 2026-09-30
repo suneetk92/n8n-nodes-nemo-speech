@@ -3,13 +3,14 @@
 const fs = require('fs');
 const path = require('path');
 
-const { Parakeet } = require('./dist/nodes/Parakeet/Parakeet.node.js');
+const { NemoSpeech } = require('./dist/nodes/NemoSpeech/NemoSpeech.node.js');
 
-const wavPath = '/root/projects/its/.build/jfk.wav';
-const modelPath = '/root/projects/its/.build/models/ggml-parakeet-tdt-0.6b-v3-q8_0.bin';
+// Use a local WAV file for testing (16kHz mono PCM16).
+// Set NEMO_WAV_PATH to override; defaults to /root/projects/its/.build/jfk.wav
+const wavPath = process.env.NEMO_WAV_PATH || '/root/projects/its/.build/jfk.wav';
 
 function makeMockExecuteFunctions(params) {
-	const node = { id: 'n1', name: 'Parakeet STT', typeVersion: 1, type: 'parakeet' };
+	const node = { id: 'n1', name: 'NeMo Speech STT', typeVersion: 1, type: 'nemoSpeech' };
 	return {
 		getNode: () => node,
 		getInputData: () => [
@@ -41,41 +42,39 @@ function makeMockExecuteFunctions(params) {
 }
 
 async function run(label, params) {
-	const node = new Parakeet();
+	const node = new NemoSpeech();
 	const fn = makeMockExecuteFunctions(params);
 	const out = await node.execute.call(fn);
 	const item = out[0][0];
 	console.log(`\n=== ${label} ===`);
 	console.log('json.text:', JSON.stringify(item.json.text));
+	console.log('json.model:', item.json.model);
 	if (item.binary) console.log('binary keys:', Object.keys(item.binary));
 	return item;
 }
 
 (async () => {
-	// 1. basic: binary input, no-gpu, 2 threads
-	await run('basic (binary, -ng -t2)', {
+	// 1. basic: binary input, CPU, 2 threads
+	await run('basic (binary, cpu, 2 threads)', {
 		inputType: 'binary',
 		binaryProperty: 'data',
-		modelPath,
 		options: { threads: 2 },
 	});
 
-	// 2. with segments + quiet
-	const item2 = await run('segments+quiet (-ps -np)', {
+	// 2. quiet mode
+	await run('quiet mode', {
 		inputType: 'binary',
 		binaryProperty: 'data',
-		modelPath,
-		options: { threads: 2, printSegments: true, noPrints: false },
+		options: { threads: 2, noPrints: true },
 	});
 
 	// 3. write txt output
-	const item3 = await run('write txt (-otxt -of)', {
+	const item3 = await run('write txt', {
 		inputType: 'binary',
 		binaryProperty: 'data',
-		modelPath,
-		options: { threads: 2, outputTxt: true, outputFile: '/tmp/parakeet-smoke' },
+		options: { threads: 2, outputTxt: true, outputFile: '/tmp/nemo-smoke' },
 	});
-	console.log('txt file exists:', fs.existsSync('/tmp/parakeet-smoke.txt'));
+	console.log('txt file exists:', fs.existsSync('/tmp/nemo-smoke.txt'));
 
 	console.log('\nALL SMOKE TESTS PASSED');
 })().catch((e) => {

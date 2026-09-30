@@ -12,34 +12,129 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Build a fully static parakeet-cli from whisper.cpp source.
-      # A static glibc binary has zero runtime shared-lib dependencies, so it
+      # Build a fully static nemo-speech from NeMo-Speech.cpp source, with
+      # ASR, diarization, NMT (translation), and ITN/PnC/VAD all enabled.
+      # A static binary has zero runtime shared-lib dependencies, so it
       # runs on both glibc and musl (Alpine) targets - including the official
       # n8n Docker image (n8nio/n8n, Alpine-based).
-      - name: Build static parakeet-cli (linux-x64)
+      # Also bundles a static ffmpeg for MP3→WAV conversion.
+      - name: Build static nemo-speech (full features) + ffmpeg (linux-x64)
         run: |
           set -e
           OUT=/tmp/bin/linux-x64
           rm -rf /tmp/bin && mkdir -p "$OUT"
-          docker run --rm -v /tmp/bin:/out debian:bookworm-slim bash -c '
+
+          # --- nemo-speech (ASR + diarization + NMT + ITN + PnC + VAD) ---
+          docker run --rm -v /tmp/bin:/out ubuntu:24.04 bash -c '
             set -e
             apt-get update -qq >/dev/null
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential cmake git 2>&1 | tail -1
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+              build-essential cmake ninja-build git pkg-config curl \
+              libsentencepiece-dev autoconf automake bison libtool gcc-12 g++-12 \
+              libprotobuf-dev protobuf-compiler libre2-dev libabsl-dev zlib1g-dev \
+              2>&1 | tail -1
             cd /tmp
-            git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git src
-            cd src
+            git clone --depth 1 https://github.com/NVIDIA/NeMo-Speech.cpp.git nemo-src 2>&1 | tail -1
+            cd nemo-src
+            git submodule update --init ggml llama.cpp 2>&1 | tail -3
+
+            # Force ASR/NMT libs to STATIC (hardcoded SHARED for the SDK).
+            sed -i "s/add_library(nemo_speech_asr SHARED/add_library(nemo_speech_asr STATIC/" src/asr/CMakeLists.txt
+            sed -i "s/add_library(nemo_speech_asr_c SHARED/add_library(nemo_speech_asr_c STATIC/" src/asr/CMakeLists.txt
+            sed -i "s/add_library(nemo_speech_nmt SHARED/add_library(nemo_speech_nmt STATIC/" src/nmt/CMakeLists.txt
+            sed -i "s/add_library(nemo_speech_nmt_c SHARED/add_library(nemo_speech_nmt_c STATIC/" src/nmt/CMakeLists.txt
+
+            # Static SentencePiece (required for a fully static binary).
+            PREFIX=/tmp/nemo-deps/sentencepiece bash scripts/build_sentencepiece_static.sh 2>&1 | tail -3
+
+            # Static OpenFST + Sparrowhawk (ITN). --disable-shared/--enable-static
+            # patched in below; the upstream script only builds shared .so.
+            sed -i "s|--enable-far --enable-pdt --disable-bin|--enable-far --enable-pdt --disable-bin --disable-shared --enable-static|" scripts/build_itn_deps.sh
+            sed -i "s|--disable-bin \\\\|--disable-bin --disable-shared --enable-static \\\\|" scripts/build_itn_deps.sh
+            sed -i "s|ls -1 \"\\$PREFIX\"/lib/libsparrowhawk.so.*|ls -1 \"\\$PREFIX\"/lib/libsparrowhawk.a \"\\$PREFIX\"/lib/libfstfar.a \"\\$PREFIX\"/lib/libfst.a|" scripts/build_itn_deps.sh
+            CC=gcc-12 CXX=g++-12 PREFIX=/tmp/nemo-deps/itn JOBS=4 bash scripts/build_itn_deps.sh /tmp/itn-build 2>&1 | tail -8
+
+            # Patch text-normalization CMake to select static archives (.a) for
+            # OpenFST/Sparrowhawk/protobuf/re2/absl/zlib instead of the default
+            # shared-lib search, and force-link FST type-registration objects
+            # (OpenFST registers FST types via static initializers that only
+            # run if their translation units are actually linked in).
+            python3 - <<PYEOF
+import re
+p = "src/common/CMakeLists.txt"
+s = open(p).read()
+old = """    find_library(SPARROWHAWK_LIB sparrowhawk HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(FSTFAR_LIB fstfar HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(FST_LIB fst HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(RE2_LIB re2 REQUIRED)"""
+new = """    set(_NEMO_SPEECH_SAVED_SUFFIXES \\"\\${CMAKE_FIND_LIBRARY_SUFFIXES}\\")
+    set(CMAKE_FIND_LIBRARY_SUFFIXES \\".a\\")
+    set(Protobuf_USE_STATIC_LIBS ON)
+    find_library(SPARROWHAWK_LIB sparrowhawk HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(FSTFAR_LIB fstfar HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(FST_LIB fst HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(RE2_LIB re2 REQUIRED)
+    find_library(ITN_PROTOBUF_LIB protobuf PATHS /usr/lib/x86_64-linux-gnu NO_DEFAULT_PATH REQUIRED)
+    find_library(ITN_ZLIB_LIB z PATHS /usr/lib/x86_64-linux-gnu NO_DEFAULT_PATH REQUIRED)
+    file(GLOB ABSL_LIBS /usr/lib/x86_64-linux-gnu/libabsl_*.a)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES \\"\\${_NEMO_SPEECH_SAVED_SUFFIXES}\\")"""
+assert old in s, "ITN find_library block not found"
+s = s.replace(old, new)
+s = s.replace(
+    "target_link_libraries(nemo_speech_text_normalization PUBLIC\\n        \\${SPARROWHAWK_LIB} \\${FSTFAR_LIB} \\${FST_LIB}\\n        \\${ITN_PROTOBUF_LIBS}\\n        -Wl,--as-needed \\${ABSL_LIBS} -Wl,--no-as-needed\\n        \\${RE2_LIB})",
+    "find_package(Threads REQUIRED)\\n    target_link_libraries(nemo_speech_text_normalization PUBLIC\\n        -Wl,--start-group\\n        -Wl,--whole-archive \\${FST_LIB} \\${FSTFAR_LIB} -Wl,--no-whole-archive\\n        \\${SPARROWHAWK_LIB} \\${RE2_LIB} \\${ITN_PROTOBUF_LIB} \\${ABSL_LIBS}\\n        -Wl,--end-group\\n        \\${ITN_ZLIB_LIB} Threads::Threads atomic)"
+)
+open(p, "w").write(s)
+print("patched src/common/CMakeLists.txt for static ITN linking")
+PYEOF
+
+            # Static ASR libs.
+            sed -i "s/add_library(nemo_speech_asr SHARED/add_library(nemo_speech_asr STATIC/" src/asr/CMakeLists.txt
+            sed -i "s/add_library(nemo_speech_asr_c SHARED/add_library(nemo_speech_asr_c STATIC/" src/asr/CMakeLists.txt
+
             mkdir -p build && cd build
             cmake .. \
+              -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
+              -DNEMO_SPEECH_BUILD_ASR=ON \
+              -DNEMO_SPEECH_BUILD_DIAR=ON \
+              -DNEMO_SPEECH_BUILD_NMT=ON \
+              -DNEMO_SPEECH_WITH_NORM=ON \
+              -DNEMO_SPEECH_BUILD_CLI=ON \
+              -DNEMO_SPEECH_BUILD_TTS=OFF \
+              -DNEMO_SPEECH_BUILD_HTTP=OFF \
+              -DNEMO_SPEECH_BUILD_GRPC=OFF \
+              -DNEMO_SPEECH_BUILD_MIC_CAPTURE=OFF \
+              -DNEMO_SPEECH_BUILD_EXAMPLES=OFF \
+              -DNEMO_SPEECH_BUILD_TESTS=OFF \
+              -DNEMO_SPEECH_BUILD_TOOLS=OFF \
+              -DNEMO_SPEECH_WITH_FLASHLIGHT=OFF \
+              -DNEMO_SPEECH_GGML_PATCHED=OFF \
+              -DNEMO_SPEECH_DEPENDENCY_PREFIX=/tmp/nemo-deps \
               -DBUILD_SHARED_LIBS=OFF \
-              -DGGML_STATIC=ON \
-              -DCMAKE_EXE_LINKER_FLAGS="-static" \
-              -DCMAKE_POSITION_INDEPENDENT_CODE=OFF
-            make parakeet-cli -j$(nproc)
-            cp bin/parakeet-cli /out/linux-x64/
-            chmod +x /out/linux-x64/parakeet-cli
+              -DCMAKE_POSITION_INDEPENDENT_CODE=OFF \
+              -DCMAKE_EXE_LINKER_FLAGS="-static -Wl,--allow-multiple-definition" \
+              -DGGML_OPENMP=OFF 2>&1 | tail -15
+            cmake --build . -j$(nproc) 2>&1 | tail -10
+            cp bin/nemo-speech /out/linux-x64/
+            # model-index.json is not in git source; extract it from the official release tarball.
+            curl -sL "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-cpu.tar.gz" -o /tmp/ns.tar.gz
+            tar xzf /tmp/ns.tar.gz -C /tmp "nemo-speech-0.1.0-linux-x86_64-cpu/share/nemo-speech/model-index.json"
+            cp /tmp/nemo-speech-0.1.0-linux-x86_64-cpu/share/nemo-speech/model-index.json /out/linux-x64/
+            rm -f /tmp/ns.tar.gz
+            chmod +x /out/linux-x64/nemo-speech
           '
+
+          # --- static ffmpeg (BtbN build, fully static, musl-compatible) ---
+          curl -sL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
+            | tar xJ --strip-components=2 \
+              "ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" \
+              -C "$OUT"
+          chmod +x "$OUT/ffmpeg"
+
           echo "=== bundle ===" && ls -la "$OUT"
+          echo "=== verify fully static ==="
+          readelf -d "$OUT/nemo-speech" 2>/dev/null | grep NEEDED && exit 1 || echo "nemo-speech: no NEEDED entries"
 
       - uses: actions/setup-node@v4
         with:
@@ -53,11 +148,12 @@ jobs:
 
       - name: Smoke test node loads
         env:
-          PARAKEET_CLI_PATH: /tmp/bin/linux-x64/parakeet-cli
+          NEMO_SPEECH_PATH: /tmp/bin/linux-x64/nemo-speech
+          FFMPEG_PATH: /tmp/bin/linux-x64/ffmpeg
         run: |
           node -e "
-            const {Parakeet}=require('./dist/nodes/Parakeet/Parakeet.node.js');
-            console.log('node loads OK, description.name =', new Parakeet().description.name);
+            const {NemoSpeech}=require('./dist/nodes/NemoSpeech/NemoSpeech.node.js');
+            console.log('node loads OK, description.name =', new NemoSpeech().description.name);
           "
 
   release:
@@ -69,39 +165,114 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build static parakeet-cli (linux-x64)
+      - name: Build static nemo-speech (full features) + ffmpeg (linux-x64)
         run: |
           set -e
           OUT=/tmp/bin/linux-x64
           rm -rf /tmp/bin && mkdir -p "$OUT"
-          docker run --rm -v /tmp/bin:/out debian:bookworm-slim bash -c '
+
+          docker run --rm -v /tmp/bin:/out ubuntu:24.04 bash -c '
             set -e
             apt-get update -qq >/dev/null
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential cmake git 2>&1 | tail -1
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+              build-essential cmake ninja-build git pkg-config curl \
+              libsentencepiece-dev autoconf automake bison libtool gcc-12 g++-12 \
+              libprotobuf-dev protobuf-compiler libre2-dev libabsl-dev zlib1g-dev \
+              2>&1 | tail -1
             cd /tmp
-            git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git src
-            cd src
+            git clone --depth 1 https://github.com/NVIDIA/NeMo-Speech.cpp.git nemo-src 2>&1 | tail -1
+            cd nemo-src
+            git submodule update --init ggml llama.cpp 2>&1 | tail -3
+
+            sed -i "s/add_library(nemo_speech_nmt SHARED/add_library(nemo_speech_nmt STATIC/" src/nmt/CMakeLists.txt
+            sed -i "s/add_library(nemo_speech_nmt_c SHARED/add_library(nemo_speech_nmt_c STATIC/" src/nmt/CMakeLists.txt
+
+            PREFIX=/tmp/nemo-deps/sentencepiece bash scripts/build_sentencepiece_static.sh 2>&1 | tail -3
+
+            sed -i "s|--enable-far --enable-pdt --disable-bin|--enable-far --enable-pdt --disable-bin --disable-shared --enable-static|" scripts/build_itn_deps.sh
+            sed -i "s|--disable-bin \\\\|--disable-bin --disable-shared --enable-static \\\\|" scripts/build_itn_deps.sh
+            sed -i "s|ls -1 \"\\$PREFIX\"/lib/libsparrowhawk.so.*|ls -1 \"\\$PREFIX\"/lib/libsparrowhawk.a \"\\$PREFIX\"/lib/libfstfar.a \"\\$PREFIX\"/lib/libfst.a|" scripts/build_itn_deps.sh
+            CC=gcc-12 CXX=g++-12 PREFIX=/tmp/nemo-deps/itn JOBS=4 bash scripts/build_itn_deps.sh /tmp/itn-build 2>&1 | tail -8
+
+            python3 - <<PYEOF
+import re
+p = "src/common/CMakeLists.txt"
+s = open(p).read()
+old = """    find_library(SPARROWHAWK_LIB sparrowhawk HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(FSTFAR_LIB fstfar HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(FST_LIB fst HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(RE2_LIB re2 REQUIRED)"""
+new = """    set(_NEMO_SPEECH_SAVED_SUFFIXES \\"\\${CMAKE_FIND_LIBRARY_SUFFIXES}\\")
+    set(CMAKE_FIND_LIBRARY_SUFFIXES \\".a\\")
+    set(Protobuf_USE_STATIC_LIBS ON)
+    find_library(SPARROWHAWK_LIB sparrowhawk HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(FSTFAR_LIB fstfar HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(FST_LIB fst HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
+    find_library(RE2_LIB re2 REQUIRED)
+    find_library(ITN_PROTOBUF_LIB protobuf PATHS /usr/lib/x86_64-linux-gnu NO_DEFAULT_PATH REQUIRED)
+    find_library(ITN_ZLIB_LIB z PATHS /usr/lib/x86_64-linux-gnu NO_DEFAULT_PATH REQUIRED)
+    file(GLOB ABSL_LIBS /usr/lib/x86_64-linux-gnu/libabsl_*.a)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES \\"\\${_NEMO_SPEECH_SAVED_SUFFIXES}\\")"""
+assert old in s, "ITN find_library block not found"
+s = s.replace(old, new)
+s = s.replace(
+    "target_link_libraries(nemo_speech_text_normalization PUBLIC\\n        \\${SPARROWHAWK_LIB} \\${FSTFAR_LIB} \\${FST_LIB}\\n        \\${ITN_PROTOBUF_LIBS}\\n        -Wl,--as-needed \\${ABSL_LIBS} -Wl,--no-as-needed\\n        \\${RE2_LIB})",
+    "find_package(Threads REQUIRED)\\n    target_link_libraries(nemo_speech_text_normalization PUBLIC\\n        -Wl,--start-group\\n        -Wl,--whole-archive \\${FST_LIB} \\${FSTFAR_LIB} -Wl,--no-whole-archive\\n        \\${SPARROWHAWK_LIB} \\${RE2_LIB} \\${ITN_PROTOBUF_LIB} \\${ABSL_LIBS}\\n        -Wl,--end-group\\n        \\${ITN_ZLIB_LIB} Threads::Threads atomic)"
+)
+open(p, "w").write(s)
+print("patched src/common/CMakeLists.txt for static ITN linking")
+PYEOF
+
+            sed -i "s/add_library(nemo_speech_asr SHARED/add_library(nemo_speech_asr STATIC/" src/asr/CMakeLists.txt
+            sed -i "s/add_library(nemo_speech_asr_c SHARED/add_library(nemo_speech_asr_c STATIC/" src/asr/CMakeLists.txt
+
             mkdir -p build && cd build
             cmake .. \
+              -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
+              -DNEMO_SPEECH_BUILD_ASR=ON \
+              -DNEMO_SPEECH_BUILD_DIAR=ON \
+              -DNEMO_SPEECH_BUILD_NMT=ON \
+              -DNEMO_SPEECH_WITH_NORM=ON \
+              -DNEMO_SPEECH_BUILD_CLI=ON \
+              -DNEMO_SPEECH_BUILD_TTS=OFF \
+              -DNEMO_SPEECH_BUILD_HTTP=OFF \
+              -DNEMO_SPEECH_BUILD_GRPC=OFF \
+              -DNEMO_SPEECH_BUILD_MIC_CAPTURE=OFF \
+              -DNEMO_SPEECH_BUILD_EXAMPLES=OFF \
+              -DNEMO_SPEECH_BUILD_TESTS=OFF \
+              -DNEMO_SPEECH_BUILD_TOOLS=OFF \
+              -DNEMO_SPEECH_WITH_FLASHLIGHT=OFF \
+              -DNEMO_SPEECH_GGML_PATCHED=OFF \
+              -DNEMO_SPEECH_DEPENDENCY_PREFIX=/tmp/nemo-deps \
               -DBUILD_SHARED_LIBS=OFF \
-              -DGGML_STATIC=ON \
-              -DCMAKE_EXE_LINKER_FLAGS="-static" \
-              -DCMAKE_POSITION_INDEPENDENT_CODE=OFF
-            make parakeet-cli -j$(nproc)
-            cp bin/parakeet-cli /out/linux-x64/
-            chmod +x /out/linux-x64/parakeet-cli
+              -DCMAKE_POSITION_INDEPENDENT_CODE=OFF \
+              -DCMAKE_EXE_LINKER_FLAGS="-static -Wl,--allow-multiple-definition" \
+              -DGGML_OPENMP=OFF 2>&1 | tail -15
+            cmake --build . -j$(nproc) 2>&1 | tail -10
+            cp bin/nemo-speech /out/linux-x64/
+            curl -sL "https://github.com/NVIDIA/NeMo-Speech.cpp/releases/download/v0.1.0/nemo-speech-0.1.0-linux-x86_64-cpu.tar.gz" -o /tmp/ns.tar.gz
+            tar xzf /tmp/ns.tar.gz -C /tmp "nemo-speech-0.1.0-linux-x86_64-cpu/share/nemo-speech/model-index.json"
+            cp /tmp/nemo-speech-0.1.0-linux-x86_64-cpu/share/nemo-speech/model-index.json /out/linux-x64/
+            rm -f /tmp/ns.tar.gz
+            chmod +x /out/linux-x64/nemo-speech
           '
+
+          curl -sL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
+            | tar xJ --strip-components=2 \
+              "ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" \
+              -C "$OUT"
+          chmod +x "$OUT/ffmpeg"
 
       - name: Package as tarball
         run: |
           cd /tmp/bin
-          tar -czf "parakeet-cli-linux-x64.tar.gz" linux-x64/
+          tar -czf "nemo-speech-linux-x64.tar.gz" linux-x64/
 
       - name: Create GitHub Release with asset
         uses: softprops/action-gh-release@v2
         with:
-          files: /tmp/bin/parakeet-cli-linux-x64.tar.gz
+          files: /tmp/bin/nemo-speech-linux-x64.tar.gz
           draft: false
           prerelease: false
 

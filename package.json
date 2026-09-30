@@ -1,32 +1,35 @@
 {
-  "name": "n8n-nodes-parakeet",
-  "version": "1.2.0",
-  "description": "n8n community node for Parakeet (parakeet.cpp / whisper.cpp) — offline speech-to-text using the parakeet-tdt-0.6b-v3 model. Downloads a prebuilt parakeet-cli and the ggml-parakeet-tdt-0.6b-v3-q8_0.bin model at runtime.",
+  "name": "n8n-nodes-nemo-speech",
+  "version": "1.4.0",
+  "description": "n8n community node for NeMo-Speech.cpp — offline speech-to-text, diarization, VAD, punctuation, inverse text normalization, and translation using the parakeet-tdt-0.6b-v3 model (Q8_0 GGUF) and official companion models. Downloads a prebuilt static nemo-speech binary, ffmpeg, and models at runtime.",
   "license": "MIT",
-  "homepage": "https://github.com/suneetk92/n8n-nodes-parakeet",
+  "homepage": "https://github.com/suneetk92/n8n-nodes-nemo-speech",
   "keywords": [
     "n8n-community-node-package",
     "n8n",
+    "nemo-speech",
     "parakeet",
-    "whisper.cpp",
+    "nemotron",
     "speech-to-text",
     "transcription",
+    "diarization",
+    "translation",
     "asr",
-    "ggml"
+    "gguf"
   ],
   "author": {
     "name": "Suneet Kumar"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/suneetk92/n8n-nodes-parakeet.git"
+    "url": "https://github.com/suneetk92/n8n-nodes-nemo-speech.git"
   },
   "files": [
     "dist"
   ],
-  "main": "dist/nodes/Parakeet/Parakeet.node.js",
+  "main": "dist/nodes/NemoSpeech/NemoSpeech.node.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json && node -e \"require('fs').mkdirSync('dist/icons',{recursive:true});require('fs').copyFileSync('src/icons/parakeet.svg','dist/icons/parakeet.svg')\"",
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').mkdirSync('dist/icons',{recursive:true});require('fs').copyFileSync('src/icons/nemo-speech.svg','dist/icons/nemo-speech.svg')\"",
     "watch": "tsc -w -p tsconfig.json",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "prepack": "npm run build"
@@ -34,7 +37,7 @@
   "n8n": {
     "n8nNodesApiVersion": 1,
     "nodes": [
-      "dist/nodes/Parakeet/Parakeet.node.js"
+      "dist/nodes/NemoSpeech/NemoSpeech.node.js"
     ]
   },
   "devDependencies": {
