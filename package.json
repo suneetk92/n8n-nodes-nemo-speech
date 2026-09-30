@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-nemo-speech",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "n8n community node for NeMo-Speech.cpp — offline speech-to-text, diarization, VAD, punctuation, inverse text normalization, and translation using the parakeet-tdt-0.6b-v3 model (Q8_0 GGUF) and official companion models. Downloads a prebuilt static nemo-speech binary, ffmpeg, and models at runtime.",
   "license": "MIT",
   "homepage": "https://github.com/suneetk92/n8n-nodes-nemo-speech",

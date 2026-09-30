@@ -98,13 +98,17 @@ jobs:
             chmod +x /out/linux-x64/nemo-speech
           '
 
-          # --- static ffmpeg (BtbN build, fully static, musl-compatible) ---
+          # --- static ffmpeg (johnvansickle.com, genuinely static — zero
+          # NEEDED entries, verified with readelf and a real Alpine 3.24
+          # container. The BtbN build previously used here is dynamically
+          # linked against glibc/libmvec and fails to even exec on musl.)
+          rm -rf /tmp/ffmpeg-extract && mkdir -p /tmp/ffmpeg-extract
           curl -fSL --retry 3 --retry-delay 5 \
             -o /tmp/ffmpeg.tar.xz \
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
-          tar xJf /tmp/ffmpeg.tar.xz --strip-components=2 -C "$OUT" \
-            "ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
-          rm -f /tmp/ffmpeg.tar.xz
+            "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+          tar xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg-extract
+          find /tmp/ffmpeg-extract -maxdepth 2 -type f -name ffmpeg -exec cp {} "$OUT/ffmpeg" \;
+          rm -f /tmp/ffmpeg.tar.xz && rm -rf /tmp/ffmpeg-extract
           [ -x "$OUT/ffmpeg" ] || { echo "::error::ffmpeg extraction failed, $OUT/ffmpeg missing"; exit 1; }
           chmod +x "$OUT/ffmpeg"
 
@@ -208,12 +212,13 @@ jobs:
             chmod +x /out/linux-x64/nemo-speech
           '
 
+          rm -rf /tmp/ffmpeg-extract && mkdir -p /tmp/ffmpeg-extract
           curl -fSL --retry 3 --retry-delay 5 \
             -o /tmp/ffmpeg.tar.xz \
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
-          tar xJf /tmp/ffmpeg.tar.xz --strip-components=2 -C "$OUT" \
-            "ffmpeg-master-latest-linux64-gpl/bin/ffmpeg"
-          rm -f /tmp/ffmpeg.tar.xz
+            "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+          tar xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg-extract
+          find /tmp/ffmpeg-extract -maxdepth 2 -type f -name ffmpeg -exec cp {} "$OUT/ffmpeg" \;
+          rm -f /tmp/ffmpeg.tar.xz && rm -rf /tmp/ffmpeg-extract
           [ -x "$OUT/ffmpeg" ] || { echo "::error::ffmpeg extraction failed, $OUT/ffmpeg missing"; exit 1; }
           chmod +x "$OUT/ffmpeg"
 

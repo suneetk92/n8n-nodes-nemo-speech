@@ -139,10 +139,10 @@ Hugging Face. Downloaded once, cached under `~/.n8n/nemo-speech/models/`.
 ## Binary (runtime download)
 
 The npm package contains **no** binaries or weights. On first run the node downloads the static
-`nemo-speech` binary (~14 MB) + static `ffmpeg` (~90 MB) from a GitHub Release asset, extracted to
-`~/.n8n/nemo-speech/bin/<platform>-<arch>/`. The `nemo-speech` binary is fully static (zero
-shared-lib dependencies — ASR, diarization, VAD, PnC, ITN, and NMT all compiled in), so it runs on
-both glibc and musl (Alpine) targets.
+`nemo-speech` binary (~14 MB) + static `ffmpeg` (~80 MB, from johnvansickle.com's static build)
+from a GitHub Release asset, extracted to `~/.n8n/nemo-speech/bin/<platform>-<arch>/`. Both
+binaries are fully static (zero shared-lib dependencies), so they run on both glibc and musl
+(Alpine) targets.
 
 The static binary is built from `NVIDIA/NeMo-Speech.cpp` source by
 `.github/workflows/build-and-publish.yml` (a new GitHub Release is cut per tag). Two small patches
