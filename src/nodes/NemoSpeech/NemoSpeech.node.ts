@@ -302,15 +302,69 @@ export class NemoSpeech implements INodeType {
 				default: 'data',
 				description: 'Name of the binary property on the input item that holds the audio.',
 			},
-			// --- Model ---
+			// --- Top-level toggles ---
 			{
-				displayName: 'Model Path',
-				name: 'modelPath',
+				displayName: 'Output Format',
+				name: 'format',
+				type: 'options',
+				options: [
+					{ name: 'Plain text', value: 'text' },
+					{ name: 'JSON (with timestamps)', value: 'json' },
+					{ name: 'SRT subtitles', value: 'srt' },
+					{ name: 'WebVTT subtitles', value: 'vtt' },
+				],
+				default: 'text',
+				description: 'Output format. JSON/SRT/VTT request word timestamps automatically.',
+			},
+			{
+				displayName: 'VAD Masking',
+				name: 'vadMasking',
+				type: 'boolean',
+				default: false,
+				description: 'Enable VAD feature masking (auto-downloads the official Silero 6.2.3 model if no path is set in Options).',
+			},
+			{
+				displayName: 'Diarize',
+				name: 'diarize',
+				type: 'boolean',
+				default: false,
+				description: 'Enable speaker diarization (auto-downloads the default Nemotron-3-Diarization model).',
+			},
+			{
+				displayName: 'Endpointing',
+				name: 'endpointing',
+				type: 'boolean',
+				default: false,
+				description: 'Enable mid-stream end-of-utterance detection (multiple finals).',
+			},
+			{
+				displayName: 'Enable ITN',
+				name: 'itn',
+				type: 'boolean',
+				default: false,
+				description: 'Enable inverse text normalization ("twenty twenty four" → "2024"). Opt-in — auto-downloads the official multi-language grammars (en, es, de, ...) on first use. Self-punctuating ASR models (e.g. parakeet-tdt) already normalize most cardinals themselves, so this mainly helps ordinals/symbols or plain-text models like parakeet-ctc.',
+			},
+			{
+				displayName: 'Enable PnC',
+				name: 'pnc',
+				type: 'boolean',
+				default: false,
+				description: 'Enable automatic punctuation and capitalization. Opt-in — auto-downloads the official PnC BERT model on first use. No-ops with a warning on self-punctuating models (e.g. parakeet-tdt); restores punctuation/casing for plain-text models (e.g. parakeet-ctc).',
+			},
+			{
+				displayName: 'Translate To',
+				name: 'translateTo',
 				type: 'string',
 				default: '',
-				placeholder: 'auto (default parakeet-tdt model)',
-				description:
-					'Path to a .gguf model file, or an indexed model name (e.g. "parakeet-tdt"). Leave empty to use the default indexed model (parakeet-tdt-0.6b-v3), auto-downloaded on first run.',
+				placeholder: 'e.g. es, de, fr, zh',
+				description: 'Target language code. Enables translation via the official Riva-Translate-4B-Instruct-v2 model (auto-downloaded, 4.2 GB). Leave empty to disable.',
+			},
+			{
+				displayName: 'Write Text File',
+				name: 'outputTxt',
+				type: 'boolean',
+				default: false,
+				description: 'Also write the transcript to a .txt file (returned as a binary property).',
 			},
 			// --- Options ---
 			{
@@ -320,6 +374,16 @@ export class NemoSpeech implements INodeType {
 				placeholder: 'Add option',
 				default: {},
 				options: [
+					// Model
+					{
+						displayName: 'Model Path',
+						name: 'modelPath',
+						type: 'string',
+						default: '',
+						placeholder: 'auto (default parakeet-tdt model)',
+						description:
+							'Path to a .gguf model file, or an indexed model name (e.g. "parakeet-tdt"). Leave empty to use the default indexed model (parakeet-tdt-0.6b-v3), auto-downloaded on first run.',
+					},
 					// Core
 					{
 						displayName: 'Threads',
@@ -340,19 +404,6 @@ export class NemoSpeech implements INodeType {
 						],
 						default: 'cpu',
 						description: 'Compute device. CPU for the static binary; GPU requires a CUDA/Metal build.',
-					},
-					{
-						displayName: 'Output Format',
-						name: 'format',
-						type: 'options',
-						options: [
-							{ name: 'Plain text', value: 'text' },
-							{ name: 'JSON (with timestamps)', value: 'json' },
-							{ name: 'SRT subtitles', value: 'srt' },
-							{ name: 'WebVTT subtitles', value: 'vtt' },
-						],
-						default: 'text',
-						description: 'Output format. JSON/SRT/VTT request word timestamps automatically.',
 					},
 					{
 						displayName: 'Stream Mode',
@@ -470,13 +521,6 @@ export class NemoSpeech implements INodeType {
 						description: 'Path to a Silero VAD GGUF model. Leave empty to auto-download the official Silero 6.2.3 model when VAD masking or VAD-based endpointing is enabled.',
 					},
 					{
-						displayName: 'VAD Masking',
-						name: 'vadMasking',
-						type: 'boolean',
-						default: false,
-						description: 'Enable VAD feature masking (auto-downloads the VAD model if no path is set).',
-					},
-					{
 						displayName: 'VAD-Based Endpointing',
 						name: 'vadBasedEou',
 						type: 'boolean',
@@ -506,13 +550,6 @@ export class NemoSpeech implements INodeType {
 					},
 					// Diarization
 					{
-						displayName: 'Diarize',
-						name: 'diarize',
-						type: 'boolean',
-						default: false,
-						description: 'Enable speaker diarization (auto-downloads the default Nemotron-3-Diarization model).',
-					},
-					{
 						displayName: 'Diar Model Path',
 						name: 'diarModel',
 						type: 'string',
@@ -526,14 +563,6 @@ export class NemoSpeech implements INodeType {
 						default: false,
 						description: 'Also run the standalone `diarize` command and attach an RTTM file (returned as an `rttm` binary property). Requires Diarize enabled.',
 					},
-					// Endpointing
-					{
-						displayName: 'Endpointing',
-						name: 'endpointing',
-						type: 'boolean',
-						default: false,
-						description: 'Enable mid-stream end-of-utterance detection (multiple finals).',
-					},
 					// Postprocessing
 					{
 						displayName: 'Profanity List Path',
@@ -543,25 +572,11 @@ export class NemoSpeech implements INodeType {
 						description: 'Path to a profanity filter list file (one word per line).',
 					},
 					{
-						displayName: 'Enable ITN',
-						name: 'itn',
-						type: 'boolean',
-						default: false,
-						description: 'Enable inverse text normalization ("twenty twenty four" → "2024"). Opt-in — auto-downloads the official multi-language grammars (en, es, de, ...) on first use. Self-punctuating ASR models (e.g. parakeet-tdt) already normalize most cardinals themselves, so this mainly helps ordinals/symbols or plain-text models like parakeet-ctc.',
-					},
-					{
 						displayName: 'ITN Model Dir',
 						name: 'itnModelDir',
 						type: 'string',
 						default: '',
 						description: 'Path to a Sparrowhawk grammar directory. Only used when Enable ITN is on — leave empty to auto-download the official grammars.',
-					},
-					{
-						displayName: 'Enable PnC',
-						name: 'pnc',
-						type: 'boolean',
-						default: false,
-						description: 'Enable automatic punctuation and capitalization. Opt-in — auto-downloads the official PnC BERT model on first use. No-ops with a warning on self-punctuating models (e.g. parakeet-tdt); restores punctuation/casing for plain-text models (e.g. parakeet-ctc).',
 					},
 					{
 						displayName: 'PnC Model Path',
@@ -571,14 +586,6 @@ export class NemoSpeech implements INodeType {
 						description: 'Path to a PnC BERT GGUF. Only used when Enable PnC is on — leave empty to auto-download the official model.',
 					},
 					// Translation (NMT)
-					{
-						displayName: 'Translate To',
-						name: 'translateTo',
-						type: 'string',
-						default: '',
-						placeholder: 'e.g. es, de, fr, zh',
-						description: 'Target language code. Enables translation via the official Riva-Translate-4B model (auto-downloaded, 4.2 GB). Leave empty to disable.',
-					},
 					{
 						displayName: 'NMT Model Path',
 						name: 'nmtModel',
@@ -595,13 +602,6 @@ export class NemoSpeech implements INodeType {
 						description: 'Comma-separated list of words/phrases to boost in the transcript (e.g. "NVIDIA,Parakeet").',
 					},
 					// Output file
-					{
-						displayName: 'Write Text File',
-						name: 'outputTxt',
-						type: 'boolean',
-						default: false,
-						description: 'Also write the transcript to a .txt file (returned as a binary property).',
-					},
 					{
 						displayName: 'Output File Base Path',
 						name: 'outputFile',
@@ -630,10 +630,18 @@ export class NemoSpeech implements INodeType {
 			);
 		}
 
-		const modelParam = (this.getNodeParameter('modelPath', 0, '') as string) || '';
 		const options = (this.getNodeParameter('options', 0, {}) as IDataObject) || {};
+		const modelParam = (options.modelPath as string) || '';
 		const inputType = (this.getNodeParameter('inputType', 0, 'binary') as string) || 'binary';
 		const binaryProperty = (this.getNodeParameter('binaryProperty', 0, 'data') as string) || 'data';
+		const format = (this.getNodeParameter('format', 0, 'text') as string) || 'text';
+		const vadMasking = this.getNodeParameter('vadMasking', 0, false) as boolean;
+		const diarize = this.getNodeParameter('diarize', 0, false) as boolean;
+		const endpointing = this.getNodeParameter('endpointing', 0, false) as boolean;
+		const itnEnabled = this.getNodeParameter('itn', 0, false) as boolean;
+		const pncEnabled = this.getNodeParameter('pnc', 0, false) as boolean;
+		const translateTo = (this.getNodeParameter('translateTo', 0, '') as string) || '';
+		const outputTxt = this.getNodeParameter('outputTxt', 0, false) as boolean;
 
 		// Model dir for auto-download of the default indexed model.
 		const modelDir = path.join(CACHE_DIR, 'models');
@@ -701,7 +709,6 @@ export class NemoSpeech implements INodeType {
 			args.push('--device', device);
 
 			// Output format
-			const format = (options.format as string) || 'text';
 			if (format !== 'text') args.push('--format', format);
 
 			// Stream mode
@@ -731,20 +738,20 @@ export class NemoSpeech implements INodeType {
 
 			// VAD (auto-downloads the official Silero 6.2.3 GGUF when a mask/EOU
 			// mode is requested and no explicit path is given).
-			const wantsVad = Boolean(options.vadMasking) || Boolean(options.vadBasedEou);
+			const wantsVad = vadMasking || Boolean(options.vadBasedEou);
 			if (options.vadModel) {
 				args.push('--vad-model', String(options.vadModel));
 			} else if (wantsVad) {
 				args.push('--vad-model', await ensureCompanionModel(modelDir, VAD_MODEL_FILENAME, DEFAULT_VAD_MODEL_URL));
 			}
-			if (options.vadMasking) args.push('--vad-masking');
+			if (vadMasking) args.push('--vad-masking');
 			if (options.vadOnset != null) args.push('--vad-onset', String(options.vadOnset));
 			if (options.vadOffset != null) args.push('--vad-offset', String(options.vadOffset));
 			if (options.vadPadMs != null) args.push('--vad-pad-ms', String(options.vadPadMs));
 
 			// Diarization (auto-downloads the default Nemotron-3-Diarization GGUF).
 			let diarPath: string | undefined;
-			if (options.diarize) {
+			if (diarize) {
 				diarPath = options.diarModel
 					? String(options.diarModel)
 					: await ensureCompanionModel(modelDir, DIAR_MODEL_FILENAME, DEFAULT_DIAR_MODEL_URL);
@@ -752,7 +759,7 @@ export class NemoSpeech implements INodeType {
 			}
 
 			// Endpointing
-			if (options.endpointing) args.push('--endpointing');
+			if (endpointing) args.push('--endpointing');
 			if (options.vadBasedEou) args.push('--vad-based-eou');
 
 			// Postprocessing. ITN and PnC are opt-in: auto-downloaded from official
@@ -764,13 +771,13 @@ export class NemoSpeech implements INodeType {
 			// PnC pass / Sparrowhawk ITN grammars on top of whatever the ASR
 			// head already produced.
 			if (options.profanityList) args.push('--profanity-list', String(options.profanityList));
-			if (options.itn) {
+			if (itnEnabled) {
 				const itnDir = options.itnModelDir
 					? String(options.itnModelDir)
 					: await ensureItnConfigs(modelDir);
 				args.push('--itn-model-dir', itnDir);
 			}
-			if (options.pnc) {
+			if (pncEnabled) {
 				const pncPath = options.pncModel
 					? String(options.pncModel)
 					: await ensureCompanionModel(modelDir, PNC_MODEL_FILENAME, DEFAULT_PNC_MODEL_URL);
@@ -779,11 +786,11 @@ export class NemoSpeech implements INodeType {
 
 			// NMT (opt-in: translation needs an explicit target language; the
 			// official Riva-Translate-4B GGUF auto-downloads on first use).
-			if (options.translateTo) {
+			if (translateTo) {
 				const nmtPath = options.nmtModel
 					? String(options.nmtModel)
 					: await ensureCompanionModel(modelDir, NMT_MODEL_FILENAME, DEFAULT_NMT_MODEL_URL);
-				args.push('--nmt-model', nmtPath, '--translate-to', String(options.translateTo));
+				args.push('--nmt-model', nmtPath, '--translate-to', translateTo);
 			}
 
 			// Boosting
@@ -817,7 +824,7 @@ export class NemoSpeech implements INodeType {
 
 				// Optional RTTM export: standalone `diarize` subcommand, same
 				// diarizer model and WAV, run before the WAV is cleaned up.
-				if (options.diarize && options.outputRttm && diarPath) {
+				if (diarize && options.outputRttm && diarPath) {
 					const tmpRttm = tmpWav + '.rttm';
 					try {
 						await execFileAsync(nemoSpeech, ['diarize', tmpWav, '--model', diarPath, '--format', 'rttm', '--output', tmpRttm], {
@@ -851,7 +858,7 @@ export class NemoSpeech implements INodeType {
 			};
 
 			// If outputTxt was requested, surface the transcript as a binary property.
-			if (options.outputTxt) {
+			if (outputTxt) {
 				const base = options.outputFile
 					? String(options.outputFile)
 					: path.join(os.tmpdir(), `nemo-out-${Date.now()}-${i}`);

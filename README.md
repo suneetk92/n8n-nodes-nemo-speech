@@ -58,10 +58,17 @@ translation (NMT). Companion models are auto-downloaded from official sources on
 | **Input** = Binary / URL | — | Audio source: a binary property from a previous node, or a URL (wav/mp3/flac/ogg/m4a). |
 | **Binary Property** | — | Name of the binary property holding the audio (default `data`). |
 | **Audio URL** | positional arg | Used when Input = URL. |
-| **Model Path** | `--model` | Path to a `.gguf` file or indexed model name (e.g. `parakeet-tdt`). Leave empty for the default. |
+| **Output Format** | `--format` | `text`, `json`, `srt`, `vtt`. JSON/SRT/VTT add word timestamps. |
+| **VAD Masking** | `--vad-masking` | Enable VAD feature masking (auto-downloads the official Silero 6.2.3 GGUF). |
+| **Diarize** | `--diarize` | Enable speaker diarization (auto-downloads Nemotron-3-Diarization). |
+| **Endpointing** | `--endpointing` | Mid-stream end-of-utterance detection. |
+| **Enable ITN** | `--itn-model-dir` (when on) | Off by default. Auto-downloads the official multi-language grammars on first use. |
+| **Enable PnC** | `--pnc-model` (when on) | Off by default. Auto-downloads the official PnC BERT model on first use. |
+| **Translate To** | `--translate-to` | Target language code (e.g. `es`, `de`, `fr`, `zh`). Enables translation (auto-downloads Riva-Translate-4B-Instruct-v2). |
+| **Write Text File** | — | Also write a `.txt` (returned as a `transcript` binary property). |
+| **Options → Model Path** | `--model` | Path to a `.gguf` file or indexed model name (e.g. `parakeet-tdt`). Leave empty for the default. |
 | **Options → Threads** | env `OMP_NUM_THREADS` | CPU threads (default 4). |
 | **Options → Device** | `--device` | `cpu`, `cuda:0`, `metal`, `vulkan:0`. Default `cpu`. |
-| **Options → Output Format** | `--format` | `text`, `json`, `srt`, `vtt`. JSON/SRT/VTT add word timestamps. |
 | **Options → Stream Mode** | `--stream` | Feed audio in 160 ms chunks through the streaming recognizer. |
 | **Options → Word Timestamps** | `--word-times` | Include per-word timestamps (JSON). |
 | **Options → Verbose Logs** | `--verbose` | Enable verbose diagnostics. |
@@ -77,22 +84,16 @@ translation (NMT). Companion models are auto-downloaded from official sources on
 | **Options → Chunk Size** | `--chunk-sec` | CTC buffered window in seconds (default 0.16). |
 | **Options → Left/Right Padding** | `--left-pad-sec` / `--right-pad-sec` | CTC context in seconds (default 1.92). |
 | **Options → VAD Model Path** | `--vad-model` | Leave empty to auto-download the official Silero 6.2.3 GGUF when VAD masking/EOU is enabled. |
-| **Options → VAD Masking** | `--vad-masking` | Enable VAD feature masking. |
 | **Options → VAD-Based Endpointing** | `--vad-based-eou` | Use the VAD timeline (instead of token-silence) for endpointing. |
 | **Options → VAD Onset/Offset/Pad** | `--vad-onset` / `--vad-offset` / `--vad-pad-ms` | VAD thresholds and padding. |
-| **Options → Diarize** | `--diarize` | Enable speaker diarization (auto-downloads Nemotron-3-Diarization). |
+| **Options → Diar Model Path** | `--diar-model` | Leave empty to use the default Nemotron-3-Diarization model (auto-downloaded). |
 | **Options → Output RTTM (Diarization)** | — (runs `nemo-speech diarize`) | Also run the standalone `diarize` subcommand and attach an RTTM file as an `rttm` binary property. Requires **Diarize** enabled. |
-| **Options → Endpointing** | `--endpointing` | Mid-stream end-of-utterance detection. |
 | **Options → Profanity List Path** | `--profanity-list` | Path to a profanity filter file. |
-| **Options → Enable ITN** | `--itn-model-dir` (when on) | Off by default. Auto-downloads the official multi-language grammars on first use. |
 | **Options → ITN Model Dir** | `--itn-model-dir` | Custom grammar directory; only used when Enable ITN is on. |
-| **Options → Enable PnC** | `--pnc-model` (when on) | Off by default. Auto-downloads the official PnC BERT model on first use. |
 | **Options → PnC Model Path** | `--pnc-model` | Custom PnC GGUF path; only used when Enable PnC is on. |
-| **Options → Translate To** | `--translate-to` | Target language code (e.g. `es`, `de`, `fr`, `zh`). Enables translation. |
-| **Options → NMT Model Path** | `--nmt-model` | Leave empty to auto-download the official Riva-Translate-4B model. |
+| **Options → NMT Model Path** | `--nmt-model` | Leave empty to auto-download the official Riva-Translate-4B-Instruct-v2 model. |
 | **Options → Speech Context** | `--speech-context` | Comma-separated words to boost in the transcript. |
-| **Options → Write Text File** | — | Also write a `.txt` (returned as a `transcript` binary property). |
-| **Options → Output File Base Path** | — | Base path for the `.txt` output. |
+| **Options → Output File Base Path** | — | Base path for the `.txt` output; only used when Write Text File is on. |
 
 Every `nemo-speech transcribe` flag is exposed as a node input.
 
