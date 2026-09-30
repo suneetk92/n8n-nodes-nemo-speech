@@ -1,0 +1,26 @@
+--- a/scripts/build_itn_deps.sh	2026-09-30 02:51:35.642423911 +0200
++++ b/scripts/build_itn_deps.sh	2026-09-30 02:00:17.030132550 +0200
+@@ -48,7 +48,7 @@
+ sed -i 's/\bFLAGS_v\b/FST_FLAGS_v/g' src/include/fst/label-reachable.h
+ # FAR + PDT cover Sparrowhawk's runtime grammar formats. Disable command-line
+ # tools/script wrappers: the runtime calls the typed C++ OpenFST API directly.
+-./configure --prefix="$PREFIX" --enable-far --enable-pdt --disable-bin CXXFLAGS="$CXXO"
++./configure --prefix="$PREFIX" --enable-far --enable-pdt --disable-bin --disable-shared --enable-static CXXFLAGS="$CXXO"
+ make -j"$JOBS"
+ make install
+ # Stage all core headers plus the FAR/PDT extension templates used by the
+@@ -69,7 +69,7 @@
+ # (1) Autoconf tarball pins -std=c++11; OpenFST 1.8 headers need C++17.
+ sed -i 's/-std=c++11/-std=c++17/g' configure
+ [ -f configure.ac ] && sed -i 's/-std=c++11/-std=c++17/g' configure.ac || true
+-./configure --prefix="$PREFIX" --disable-bin \
++./configure --prefix="$PREFIX" --disable-bin --disable-shared --enable-static \
+     CPPFLAGS="-I$ITN_COMPAT -I$PREFIX/include" \
+     LDFLAGS="-L$PREFIX/lib" CXXFLAGS="$CXXO"
+ 
+@@ -110,4 +110,4 @@
+ 
+ echo
+ echo "ITN stack installed to $PREFIX:"
+-ls -1 "$PREFIX"/lib/libsparrowhawk.so "$PREFIX"/lib/libfstfar.so "$PREFIX"/lib/libfst.so
++ls -1 "$PREFIX"/lib/libsparrowhawk.a "$PREFIX"/lib/libfstfar.a "$PREFIX"/lib/libfst.a

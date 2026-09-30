@@ -25,7 +25,10 @@ jobs:
           rm -rf /tmp/bin && mkdir -p "$OUT"
 
           # --- nemo-speech (ASR + diarization + NMT + ITN + PnC + VAD) ---
-          docker run --rm -v /tmp/bin:/out ubuntu:24.04 bash -c '
+          docker run --rm \
+            -v /tmp/bin:/out \
+            -v "$PWD/patches:/patches:ro" \
+            ubuntu:24.04 bash -c '
             set -e
             apt-get update -qq >/dev/null
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
@@ -47,50 +50,19 @@ jobs:
             # Static SentencePiece (required for a fully static binary).
             PREFIX=/tmp/nemo-deps/sentencepiece bash scripts/build_sentencepiece_static.sh 2>&1 | tail -3
 
-            # Static OpenFST + Sparrowhawk (ITN). --disable-shared/--enable-static
-            # patched in below; the upstream script only builds shared .so.
-            sed -i "s|--enable-far --enable-pdt --disable-bin|--enable-far --enable-pdt --disable-bin --disable-shared --enable-static|" scripts/build_itn_deps.sh
-            sed -i "s|--disable-bin \\\\|--disable-bin --disable-shared --enable-static \\\\|" scripts/build_itn_deps.sh
-            sed -i "s|ls -1 \"\\$PREFIX\"/lib/libsparrowhawk.so.*|ls -1 \"\\$PREFIX\"/lib/libsparrowhawk.a \"\\$PREFIX\"/lib/libfstfar.a \"\\$PREFIX\"/lib/libfst.a|" scripts/build_itn_deps.sh
+            # Static OpenFST + Sparrowhawk (ITN). The upstream script only
+            # builds shared .so; patch it to build/link static archives.
+            # See patches/static-itn-build.patch.
+            git apply /patches/static-itn-build.patch
             CC=gcc-12 CXX=g++-12 PREFIX=/tmp/nemo-deps/itn JOBS=4 bash scripts/build_itn_deps.sh /tmp/itn-build 2>&1 | tail -8
 
-            # Patch text-normalization CMake to select static archives (.a) for
-            # OpenFST/Sparrowhawk/protobuf/re2/absl/zlib instead of the default
-            # shared-lib search, and force-link FST type-registration objects
-            # (OpenFST registers FST types via static initializers that only
-            # run if their translation units are actually linked in).
-            python3 - <<PYEOF
-import re
-p = "src/common/CMakeLists.txt"
-s = open(p).read()
-old = """    find_library(SPARROWHAWK_LIB sparrowhawk HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(FSTFAR_LIB fstfar HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(FST_LIB fst HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(RE2_LIB re2 REQUIRED)"""
-new = """    set(_NEMO_SPEECH_SAVED_SUFFIXES \\"\\${CMAKE_FIND_LIBRARY_SUFFIXES}\\")
-    set(CMAKE_FIND_LIBRARY_SUFFIXES \\".a\\")
-    set(Protobuf_USE_STATIC_LIBS ON)
-    find_library(SPARROWHAWK_LIB sparrowhawk HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(FSTFAR_LIB fstfar HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(FST_LIB fst HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(RE2_LIB re2 REQUIRED)
-    find_library(ITN_PROTOBUF_LIB protobuf PATHS /usr/lib/x86_64-linux-gnu NO_DEFAULT_PATH REQUIRED)
-    find_library(ITN_ZLIB_LIB z PATHS /usr/lib/x86_64-linux-gnu NO_DEFAULT_PATH REQUIRED)
-    file(GLOB ABSL_LIBS /usr/lib/x86_64-linux-gnu/libabsl_*.a)
-    set(CMAKE_FIND_LIBRARY_SUFFIXES \\"\\${_NEMO_SPEECH_SAVED_SUFFIXES}\\")"""
-assert old in s, "ITN find_library block not found"
-s = s.replace(old, new)
-s = s.replace(
-    "target_link_libraries(nemo_speech_text_normalization PUBLIC\\n        \\${SPARROWHAWK_LIB} \\${FSTFAR_LIB} \\${FST_LIB}\\n        \\${ITN_PROTOBUF_LIBS}\\n        -Wl,--as-needed \\${ABSL_LIBS} -Wl,--no-as-needed\\n        \\${RE2_LIB})",
-    "find_package(Threads REQUIRED)\\n    target_link_libraries(nemo_speech_text_normalization PUBLIC\\n        -Wl,--start-group\\n        -Wl,--whole-archive \\${FST_LIB} \\${FSTFAR_LIB} -Wl,--no-whole-archive\\n        \\${SPARROWHAWK_LIB} \\${RE2_LIB} \\${ITN_PROTOBUF_LIB} \\${ABSL_LIBS}\\n        -Wl,--end-group\\n        \\${ITN_ZLIB_LIB} Threads::Threads atomic)"
-)
-open(p, "w").write(s)
-print("patched src/common/CMakeLists.txt for static ITN linking")
-PYEOF
-
-            # Static ASR libs.
-            sed -i "s/add_library(nemo_speech_asr SHARED/add_library(nemo_speech_asr STATIC/" src/asr/CMakeLists.txt
-            sed -i "s/add_library(nemo_speech_asr_c SHARED/add_library(nemo_speech_asr_c STATIC/" src/asr/CMakeLists.txt
+            # Patch text-normalization CMake to select static archives (.a)
+            # for OpenFST/Sparrowhawk/protobuf/re2/absl/zlib, and force-link
+            # FST type-registration objects with --whole-archive (OpenFST
+            # registers FST types via static initializers that only run if
+            # their translation units are actually linked in). See
+            # patches/static-itn-link.patch for the full rationale.
+            git apply /patches/static-itn-link.patch
 
             mkdir -p build && cd build
             cmake .. \
@@ -171,7 +143,10 @@ PYEOF
           OUT=/tmp/bin/linux-x64
           rm -rf /tmp/bin && mkdir -p "$OUT"
 
-          docker run --rm -v /tmp/bin:/out ubuntu:24.04 bash -c '
+          docker run --rm \
+            -v /tmp/bin:/out \
+            -v "$PWD/patches:/patches:ro" \
+            ubuntu:24.04 bash -c '
             set -e
             apt-get update -qq >/dev/null
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
@@ -184,47 +159,17 @@ PYEOF
             cd nemo-src
             git submodule update --init ggml llama.cpp 2>&1 | tail -3
 
+            sed -i "s/add_library(nemo_speech_asr SHARED/add_library(nemo_speech_asr STATIC/" src/asr/CMakeLists.txt
+            sed -i "s/add_library(nemo_speech_asr_c SHARED/add_library(nemo_speech_asr_c STATIC/" src/asr/CMakeLists.txt
             sed -i "s/add_library(nemo_speech_nmt SHARED/add_library(nemo_speech_nmt STATIC/" src/nmt/CMakeLists.txt
             sed -i "s/add_library(nemo_speech_nmt_c SHARED/add_library(nemo_speech_nmt_c STATIC/" src/nmt/CMakeLists.txt
 
             PREFIX=/tmp/nemo-deps/sentencepiece bash scripts/build_sentencepiece_static.sh 2>&1 | tail -3
 
-            sed -i "s|--enable-far --enable-pdt --disable-bin|--enable-far --enable-pdt --disable-bin --disable-shared --enable-static|" scripts/build_itn_deps.sh
-            sed -i "s|--disable-bin \\\\|--disable-bin --disable-shared --enable-static \\\\|" scripts/build_itn_deps.sh
-            sed -i "s|ls -1 \"\\$PREFIX\"/lib/libsparrowhawk.so.*|ls -1 \"\\$PREFIX\"/lib/libsparrowhawk.a \"\\$PREFIX\"/lib/libfstfar.a \"\\$PREFIX\"/lib/libfst.a|" scripts/build_itn_deps.sh
+            git apply /patches/static-itn-build.patch
             CC=gcc-12 CXX=g++-12 PREFIX=/tmp/nemo-deps/itn JOBS=4 bash scripts/build_itn_deps.sh /tmp/itn-build 2>&1 | tail -8
 
-            python3 - <<PYEOF
-import re
-p = "src/common/CMakeLists.txt"
-s = open(p).read()
-old = """    find_library(SPARROWHAWK_LIB sparrowhawk HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(FSTFAR_LIB fstfar HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(FST_LIB fst HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(RE2_LIB re2 REQUIRED)"""
-new = """    set(_NEMO_SPEECH_SAVED_SUFFIXES \\"\\${CMAKE_FIND_LIBRARY_SUFFIXES}\\")
-    set(CMAKE_FIND_LIBRARY_SUFFIXES \\".a\\")
-    set(Protobuf_USE_STATIC_LIBS ON)
-    find_library(SPARROWHAWK_LIB sparrowhawk HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(FSTFAR_LIB fstfar HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(FST_LIB fst HINTS \\"\\${_NEMO_SPEECH_ITN_PREFIX}/lib\\" REQUIRED)
-    find_library(RE2_LIB re2 REQUIRED)
-    find_library(ITN_PROTOBUF_LIB protobuf PATHS /usr/lib/x86_64-linux-gnu NO_DEFAULT_PATH REQUIRED)
-    find_library(ITN_ZLIB_LIB z PATHS /usr/lib/x86_64-linux-gnu NO_DEFAULT_PATH REQUIRED)
-    file(GLOB ABSL_LIBS /usr/lib/x86_64-linux-gnu/libabsl_*.a)
-    set(CMAKE_FIND_LIBRARY_SUFFIXES \\"\\${_NEMO_SPEECH_SAVED_SUFFIXES}\\")"""
-assert old in s, "ITN find_library block not found"
-s = s.replace(old, new)
-s = s.replace(
-    "target_link_libraries(nemo_speech_text_normalization PUBLIC\\n        \\${SPARROWHAWK_LIB} \\${FSTFAR_LIB} \\${FST_LIB}\\n        \\${ITN_PROTOBUF_LIBS}\\n        -Wl,--as-needed \\${ABSL_LIBS} -Wl,--no-as-needed\\n        \\${RE2_LIB})",
-    "find_package(Threads REQUIRED)\\n    target_link_libraries(nemo_speech_text_normalization PUBLIC\\n        -Wl,--start-group\\n        -Wl,--whole-archive \\${FST_LIB} \\${FSTFAR_LIB} -Wl,--no-whole-archive\\n        \\${SPARROWHAWK_LIB} \\${RE2_LIB} \\${ITN_PROTOBUF_LIB} \\${ABSL_LIBS}\\n        -Wl,--end-group\\n        \\${ITN_ZLIB_LIB} Threads::Threads atomic)"
-)
-open(p, "w").write(s)
-print("patched src/common/CMakeLists.txt for static ITN linking")
-PYEOF
-
-            sed -i "s/add_library(nemo_speech_asr SHARED/add_library(nemo_speech_asr STATIC/" src/asr/CMakeLists.txt
-            sed -i "s/add_library(nemo_speech_asr_c SHARED/add_library(nemo_speech_asr_c STATIC/" src/asr/CMakeLists.txt
+            git apply /patches/static-itn-link.patch
 
             mkdir -p build && cd build
             cmake .. \

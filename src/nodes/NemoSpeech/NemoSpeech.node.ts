@@ -476,6 +476,13 @@ export class NemoSpeech implements INodeType {
 						default: '',
 						description: 'Path to a diarizer GGUF. Leave empty to use the default Nemotron-3-Diarization model (auto-downloaded).',
 					},
+					{
+						displayName: 'Output RTTM (Diarization)',
+						name: 'outputRttm',
+						type: 'boolean',
+						default: false,
+						description: 'Also run the standalone `diarize` command and attach an RTTM file (returned as an `rttm` binary property). Requires Diarize enabled.',
+					},
 					// Endpointing
 					{
 						displayName: 'Endpointing',
@@ -672,8 +679,9 @@ export class NemoSpeech implements INodeType {
 			if (options.vadPadMs != null) args.push('--vad-pad-ms', String(options.vadPadMs));
 
 			// Diarization (auto-downloads the default Nemotron-3-Diarization GGUF).
+			let diarPath: string | undefined;
 			if (options.diarize) {
-				const diarPath = options.diarModel
+				diarPath = options.diarModel
 					? String(options.diarModel)
 					: await ensureCompanionModel(modelDir, DIAR_MODEL_FILENAME, DEFAULT_DIAR_MODEL_URL);
 				args.push('--diar-model', diarPath);
@@ -734,6 +742,7 @@ export class NemoSpeech implements INodeType {
 			}
 
 			let stdout = '';
+			let rttmBuf: Buffer | undefined;
 			try {
 				const res = await execFileAsync(nemoSpeech, args, {
 					maxBuffer: 256 * 1024 * 1024,
@@ -741,6 +750,22 @@ export class NemoSpeech implements INodeType {
 					env,
 				});
 				stdout = res.stdout || '';
+
+				// Optional RTTM export: standalone `diarize` subcommand, same
+				// diarizer model and WAV, run before the WAV is cleaned up.
+				if (options.diarize && options.outputRttm && diarPath) {
+					const tmpRttm = tmpWav + '.rttm';
+					try {
+						await execFileAsync(nemoSpeech, ['diarize', tmpWav, '--model', diarPath, '--format', 'rttm', '--output', tmpRttm], {
+							maxBuffer: 64 * 1024 * 1024,
+							timeout: 10 * 60 * 1000,
+							env,
+						});
+						rttmBuf = fs.readFileSync(tmpRttm);
+					} finally {
+						try { fs.unlinkSync(tmpRttm); } catch { /* ignore */ }
+					}
+				}
 			} catch (e) {
 				const err = e as ExecException & { code?: number | string };
 				throw new NodeOperationError(
@@ -771,6 +796,12 @@ export class NemoSpeech implements INodeType {
 				const txtBuf = fs.readFileSync(txtPath);
 				const binData = await this.helpers.prepareBinaryData(txtBuf, path.basename(txtPath), 'text/plain');
 				outItem.binary = { transcript: binData };
+			}
+
+			// RTTM diarization export, if requested and generated above.
+			if (rttmBuf) {
+				const binData = await this.helpers.prepareBinaryData(rttmBuf, `diarization-${i}.rttm`, 'text/plain');
+				outItem.binary = { ...outItem.binary, rttm: binData };
 			}
 
 			results.push(outItem);

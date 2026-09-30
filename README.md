@@ -81,7 +81,7 @@ translation (NMT). Companion models are auto-downloaded from official sources on
 | **Options → VAD-Based Endpointing** | `--vad-based-eou` | Use the VAD timeline (instead of token-silence) for endpointing. |
 | **Options → VAD Onset/Offset/Pad** | `--vad-onset` / `--vad-offset` / `--vad-pad-ms` | VAD thresholds and padding. |
 | **Options → Diarize** | `--diarize` | Enable speaker diarization (auto-downloads Nemotron-3-Diarization). |
-| **Options → Diar Model Path** | `--diar-model` | Custom diarizer GGUF path. |
+| **Options → Output RTTM (Diarization)** | — (runs `nemo-speech diarize`) | Also run the standalone `diarize` subcommand and attach an RTTM file as an `rttm` binary property. Requires **Diarize** enabled. |
 | **Options → Endpointing** | `--endpointing` | Mid-stream end-of-utterance detection. |
 | **Options → Profanity List Path** | `--profanity-list` | Path to a profanity filter file. |
 | **Options → ITN Model Dir** | `--itn-model-dir` | On by default — leave empty to auto-download the official multi-language grammars. |
@@ -144,7 +144,11 @@ shared-lib dependencies — ASR, diarization, VAD, PnC, ITN, and NMT all compile
 both glibc and musl (Alpine) targets.
 
 The static binary is built from `NVIDIA/NeMo-Speech.cpp` source by
-`.github/workflows/build-and-publish.yml` (a new GitHub Release is cut per tag).
+`.github/workflows/build-and-publish.yml` (a new GitHub Release is cut per tag). Two small patches
+in `patches/` adapt the upstream build for a fully static (musl-compatible) binary:
+`static-itn-build.patch` builds OpenFST/Sparrowhawk as static archives instead of shared libs, and
+`static-itn-link.patch` links the ITN target against those archives with the linker flags needed
+for OpenFST's static type-registration to work (`--whole-archive`) plus protobuf/re2/absl/zlib.
 
 ## Build from source
 
