@@ -21,6 +21,7 @@ jobs:
       - name: Build static nemo-speech (full features) + ffmpeg (linux-x64)
         run: |
           set -e
+          set -o pipefail
           OUT=/tmp/bin/linux-x64
           rm -rf /tmp/bin && mkdir -p "$OUT"
 
@@ -98,10 +99,13 @@ jobs:
           '
 
           # --- static ffmpeg (BtbN build, fully static, musl-compatible) ---
-          curl -sL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
-            | tar xJ --strip-components=2 \
-              "ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" \
-              -C "$OUT"
+          curl -fSL --retry 3 --retry-delay 5 \
+            -o /tmp/ffmpeg.tar.xz \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
+          tar xJf /tmp/ffmpeg.tar.xz --strip-components=2 \
+            "ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" \
+            -C "$OUT"
+          rm -f /tmp/ffmpeg.tar.xz
           chmod +x "$OUT/ffmpeg"
 
           echo "=== bundle ===" && ls -la "$OUT"
@@ -140,6 +144,7 @@ jobs:
       - name: Build static nemo-speech (full features) + ffmpeg (linux-x64)
         run: |
           set -e
+          set -o pipefail
           OUT=/tmp/bin/linux-x64
           rm -rf /tmp/bin && mkdir -p "$OUT"
 
@@ -203,10 +208,13 @@ jobs:
             chmod +x /out/linux-x64/nemo-speech
           '
 
-          curl -sL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
-            | tar xJ --strip-components=2 \
-              "ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" \
-              -C "$OUT"
+          curl -fSL --retry 3 --retry-delay 5 \
+            -o /tmp/ffmpeg.tar.xz \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
+          tar xJf /tmp/ffmpeg.tar.xz --strip-components=2 \
+            "ffmpeg-master-latest-linux64-gpl/bin/ffmpeg" \
+            -C "$OUT"
+          rm -f /tmp/ffmpeg.tar.xz
           chmod +x "$OUT/ffmpeg"
 
       - name: Package as tarball
