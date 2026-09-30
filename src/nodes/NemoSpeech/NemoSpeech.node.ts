@@ -307,6 +307,7 @@ export class NemoSpeech implements INodeType {
 				displayName: 'Output Format',
 				name: 'format',
 				type: 'options',
+				displayOptions: { hide: { diarize: [true] } },
 				options: [
 					{ name: 'Plain text', value: 'text' },
 					{ name: 'JSON (with timestamps)', value: 'json' },
@@ -314,7 +315,7 @@ export class NemoSpeech implements INodeType {
 					{ name: 'WebVTT subtitles', value: 'vtt' },
 				],
 				default: 'text',
-				description: 'Output format. JSON/SRT/VTT request word timestamps automatically.',
+				description: 'Output format. JSON/SRT/VTT request word timestamps automatically. Forced to JSON when Diarize is on (text/srt/vtt never surface per-word speaker tags), so this field is hidden in that case.',
 			},
 			{
 				displayName: 'VAD Masking',
@@ -556,13 +557,6 @@ export class NemoSpeech implements INodeType {
 						default: '',
 						description: 'Path to a diarizer GGUF. Leave empty to use the default Nemotron-3-Diarization model (auto-downloaded).',
 					},
-					{
-						displayName: 'Output RTTM (Diarization)',
-						name: 'outputRttm',
-						type: 'boolean',
-						default: false,
-						description: 'Also run the standalone `diarize` command and attach an RTTM file (returned as an `rttm` binary property). Requires Diarize enabled.',
-					},
 					// Postprocessing
 					{
 						displayName: 'Profanity List Path',
@@ -637,6 +631,10 @@ export class NemoSpeech implements INodeType {
 		const format = (this.getNodeParameter('format', 0, 'text') as string) || 'text';
 		const vadMasking = this.getNodeParameter('vadMasking', 0, false) as boolean;
 		const diarize = this.getNodeParameter('diarize', 0, false) as boolean;
+		// Diarization only surfaces per-word speaker tags in JSON output —
+		// text/srt/vtt never read the speaker field — so force JSON whenever
+		// Diarize is on, regardless of the (hidden, in that case) Format field.
+		const effectiveFormat = diarize ? 'json' : format;
 		const endpointing = this.getNodeParameter('endpointing', 0, false) as boolean;
 		const itnEnabled = this.getNodeParameter('itn', 0, false) as boolean;
 		const pncEnabled = this.getNodeParameter('pnc', 0, false) as boolean;
@@ -709,7 +707,7 @@ export class NemoSpeech implements INodeType {
 			args.push('--device', device);
 
 			// Output format
-			if (format !== 'text') args.push('--format', format);
+			if (effectiveFormat !== 'text') args.push('--format', effectiveFormat);
 
 			// Stream mode
 			if (options.stream) args.push('--stream');
@@ -822,9 +820,13 @@ export class NemoSpeech implements INodeType {
 				});
 				stdout = res.stdout || '';
 
-				// Optional RTTM export: standalone `diarize` subcommand, same
-				// diarizer model and WAV, run before the WAV is cleaned up.
-				if (diarize && options.outputRttm && diarPath) {
+				// RTTM export: standalone `diarize` subcommand, same diarizer
+				// model and WAV, run before the WAV is cleaned up. Runs
+				// automatically whenever Diarize is on — Output Format text/
+				// srt/vtt never surface per-word speaker tags (only json does),
+				// so RTTM is the only reliable way to get diarization output
+				// regardless of the chosen transcript format.
+				if (diarize && diarPath) {
 					const tmpRttm = tmpWav + '.rttm';
 					try {
 						await execFileAsync(nemoSpeech, ['diarize', tmpWav, '--model', diarPath, '--format', 'rttm', '--output', tmpRttm], {

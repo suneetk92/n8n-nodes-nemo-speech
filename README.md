@@ -47,7 +47,7 @@ translation (NMT). Companion models are auto-downloaded from official sources on
 | ASR transcription | ✅ always | `parakeet-tdt-0.6b-v3` (self-punctuating, multilingual). |
 | PnC (punctuation/casing) | opt-in (`pnc`) | No-ops with a warning on self-punctuating models (e.g. parakeet-tdt), which already produce their own casing/punctuation; restores it for plain-text models (e.g. parakeet-ctc). |
 | ITN (inverse text normalization) | opt-in (`itn`) | "twenty twenty four" → "2024". Adds marginal value on top of self-punctuating models (mainly ordinals/symbols); more useful for plain-text models. |
-| Speaker diarization | opt-in (`diarize`) | Auto-downloads NVIDIA's `Nemotron-3-Diarization` model; tags each word with a 1-based speaker id (JSON output). |
+| Speaker diarization | opt-in (`diarize`) | Auto-downloads NVIDIA's `Nemotron-3-Diarization` model; tags each word with a 1-based speaker id (JSON output only) and always attaches a standalone RTTM file (`rttm` binary property). |
 | VAD masking / VAD-based endpointing | opt-in (`vadMasking` / `vadBasedEou`) | Auto-downloads the official Silero VAD 6.2.3 model. |
 | Translation (NMT) | opt-in (`translateTo`) | Auto-downloads NVIDIA's `Riva-Translate-4B-Instruct-v2` model (4.2 GB) on first use. |
 
@@ -60,7 +60,7 @@ translation (NMT). Companion models are auto-downloaded from official sources on
 | **Audio URL** | positional arg | Used when Input = URL. |
 | **Output Format** | `--format` | `text`, `json`, `srt`, `vtt`. JSON/SRT/VTT add word timestamps. |
 | **VAD Masking** | `--vad-masking` | Enable VAD feature masking (auto-downloads the official Silero 6.2.3 GGUF). |
-| **Diarize** | `--diarize` | Enable speaker diarization (auto-downloads Nemotron-3-Diarization). |
+| **Diarize** | `--diarize` | Enable speaker diarization (auto-downloads Nemotron-3-Diarization). Also runs the standalone `diarize` subcommand automatically and attaches an RTTM file as an `rttm` binary property — Output Format text/srt/vtt never surface per-word speaker tags (only json does), so RTTM is the reliable way to get diarization output regardless of format. |
 | **Endpointing** | `--endpointing` | Mid-stream end-of-utterance detection. |
 | **Enable ITN** | `--itn-model-dir` (when on) | Off by default. Auto-downloads the official multi-language grammars on first use. |
 | **Enable PnC** | `--pnc-model` (when on) | Off by default. Auto-downloads the official PnC BERT model on first use. |
@@ -87,7 +87,6 @@ translation (NMT). Companion models are auto-downloaded from official sources on
 | **Options → VAD-Based Endpointing** | `--vad-based-eou` | Use the VAD timeline (instead of token-silence) for endpointing. |
 | **Options → VAD Onset/Offset/Pad** | `--vad-onset` / `--vad-offset` / `--vad-pad-ms` | VAD thresholds and padding. |
 | **Options → Diar Model Path** | `--diar-model` | Leave empty to use the default Nemotron-3-Diarization model (auto-downloaded). |
-| **Options → Output RTTM (Diarization)** | — (runs `nemo-speech diarize`) | Also run the standalone `diarize` subcommand and attach an RTTM file as an `rttm` binary property. Requires **Diarize** enabled. |
 | **Options → Profanity List Path** | `--profanity-list` | Path to a profanity filter file. |
 | **Options → ITN Model Dir** | `--itn-model-dir` | Custom grammar directory; only used when Enable ITN is on. |
 | **Options → PnC Model Path** | `--pnc-model` | Custom PnC GGUF path; only used when Enable PnC is on. |
@@ -112,8 +111,10 @@ Each input item produces one output item:
 ```
 
 With **Diarize** + **Output Format** = JSON, each word in `text` (parsed as JSON) carries a
-1-based `speaker` field. With **Write Text File** enabled, a `transcript` binary property (the
-`.txt`) is also attached.
+1-based `speaker` field. Diarize also always attaches an RTTM file as an `rttm` binary property
+(speaker-turn intervals), regardless of Output Format — text/srt/vtt never surface per-word
+speaker tags, so RTTM is the reliable way to get diarization output in those formats. With
+**Write Text File** enabled, a `transcript` binary property (the `.txt`) is also attached.
 
 ## Companion models (auto-downloaded)
 
