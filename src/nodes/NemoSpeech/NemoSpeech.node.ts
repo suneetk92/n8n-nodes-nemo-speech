@@ -210,6 +210,49 @@ async function ensureItnConfigs(modelDir: string): Promise<string> {
 	return destDir;
 }
 
+/**
+ * Resolve the --model argument to a local .gguf path, downloading it via
+ * Node's own HTTPS client (through ensureCompanionModel) instead of the
+ * nemo-speech binary's own internal downloader, which shells out to `curl`
+ * — unavailable on minimal images (e.g. this project's target Alpine/musl
+ * n8n container). Local paths pass through unchanged. Indexed names/aliases
+ * (e.g. the default "nvidia/parakeet-tdt-0.6b-v3", or short aliases like
+ * "parakeet-ctc") are looked up in the bundled model-index.json to find the
+ * HF repo/revision/filename, then downloaded to modelDir just like the
+ * companion models.
+ */
+async function resolveAsrModel(
+	modelParam: string,
+	modelDir: string,
+	modelIndexPath: string,
+): Promise<string> {
+	if (fs.existsSync(modelParam)) return modelParam;
+	if (!fs.existsSync(modelIndexPath)) return modelParam; // no index bundled; let the CLI try (will fail without curl)
+
+	const index = JSON.parse(fs.readFileSync(modelIndexPath, 'utf-8')) as {
+		models: Array<{
+			repo: string;
+			aliases?: string[];
+			revision: string;
+			artifacts: Array<{ role: string; filename: string }>;
+		}>;
+	};
+	const needle = modelParam.toLowerCase();
+	const shortRepo = needle.includes('/') ? needle.slice(needle.lastIndexOf('/') + 1) : needle;
+	const entry = index.models.find((m) => {
+		if (m.repo.toLowerCase() === needle) return true;
+		if (m.repo.toLowerCase().endsWith('/' + shortRepo)) return true;
+		return (m.aliases || []).some((a) => a.toLowerCase() === needle);
+	});
+	if (!entry) return modelParam; // unknown name; let the CLI try (will fail without curl)
+
+	const artifact = entry.artifacts.find((a) => a.role === 'asr') || entry.artifacts[0];
+	if (!artifact) return modelParam;
+
+	const url = `https://huggingface.co/${entry.repo}/resolve/${entry.revision}/${artifact.filename}`;
+	return ensureCompanionModel(modelDir, artifact.filename, url);
+}
+
 // ---------------------------------------------------------------------------
 // Node
 // ---------------------------------------------------------------------------
@@ -596,6 +639,21 @@ export class NemoSpeech implements INodeType {
 		const modelDir = path.join(CACHE_DIR, 'models');
 		fs.mkdirSync(modelDir, { recursive: true });
 
+		// Resolve the ASR model to a local path ourselves (see resolveAsrModel):
+		// the binary's own auto-downloader needs `curl`, which isn't guaranteed
+		// to exist on minimal target images.
+		const modelIndexPath = path.join(path.dirname(nemoSpeech), 'model-index.json');
+		let resolvedModelPath: string;
+		try {
+			resolvedModelPath = await resolveAsrModel(
+				modelParam || 'nvidia/parakeet-tdt-0.6b-v3',
+				modelDir,
+				modelIndexPath,
+			);
+		} catch (e) {
+			throw new NodeOperationError(node, `Failed to download ASR model: ${(e as Error).message}`);
+		}
+
 		const results: INodeExecutionData[] = [];
 
 		for (let i = 0; i < items.length; i++) {
@@ -635,9 +693,8 @@ export class NemoSpeech implements INodeType {
 			// Build the nemo-speech argument list.
 			const args: string[] = ['transcribe', tmpWav];
 
-			// Model (default to the indexed parakeet-tdt model).
-			const effectiveModel = modelParam || 'nvidia/parakeet-tdt-0.6b-v3';
-			args.push('--model', effectiveModel);
+			// Model: resolved to a local path already (see resolveAsrModel above).
+			args.push('--model', resolvedModelPath);
 
 			// Device
 			const device = (options.device as string) || 'cpu';
@@ -737,14 +794,12 @@ export class NemoSpeech implements INodeType {
 				}
 			}
 
-			// Env: model cache dir + thread count.
+			// Env: model cache dir + thread count. Every model arg (ASR, diar,
+			// VAD, PnC, ITN, NMT) is already a resolved local path by this point,
+			// so the binary never needs to consult NEMO_SPEECH_MODEL_INDEX or
+			// auto-download anything itself.
 			const env: NodeJS.ProcessEnv = { ...process.env };
 			env.NEMO_SPEECH_MODEL_DIR = modelDir;
-			// Point the binary at the bundled model-index.json (maps short names → HF repos).
-			const modelIndexPath = path.join(path.dirname(nemoSpeech), 'model-index.json');
-			if (fs.existsSync(modelIndexPath)) {
-				env.NEMO_SPEECH_MODEL_INDEX = modelIndexPath;
-			}
 			if (options.threads != null) {
 				env.OMP_NUM_THREADS = String(options.threads);
 				env.OPENBLAS_NUM_THREADS = String(options.threads);
