@@ -500,25 +500,32 @@ export class NemoSpeech implements INodeType {
 						description: 'Path to a profanity filter list file (one word per line).',
 					},
 					{
+						displayName: 'Enable ITN',
+						name: 'itn',
+						type: 'boolean',
+						default: false,
+						description: 'Enable inverse text normalization ("twenty twenty four" → "2024"). Opt-in — auto-downloads the official multi-language grammars (en, es, de, ...) on first use. Self-punctuating ASR models (e.g. parakeet-tdt) already normalize most cardinals themselves, so this mainly helps ordinals/symbols or plain-text models like parakeet-ctc.',
+					},
+					{
 						displayName: 'ITN Model Dir',
 						name: 'itnModelDir',
 						type: 'string',
 						default: '',
-						description: 'Path to a Sparrowhawk grammar directory for inverse text normalization. On by default — leave empty to auto-download the official multi-language grammars (en, es, de, ...).',
+						description: 'Path to a Sparrowhawk grammar directory. Only used when Enable ITN is on — leave empty to auto-download the official grammars.',
 					},
 					{
-						displayName: 'Verbatim (Disable ITN)',
-						name: 'verbatim',
+						displayName: 'Enable PnC',
+						name: 'pnc',
 						type: 'boolean',
 						default: false,
-						description: 'Skip inverse text normalization and keep the spoken-form transcript verbatim.',
+						description: 'Enable automatic punctuation and capitalization. Opt-in — auto-downloads the official PnC BERT model on first use. No-ops with a warning on self-punctuating models (e.g. parakeet-tdt); restores punctuation/casing for plain-text models (e.g. parakeet-ctc).',
 					},
 					{
 						displayName: 'PnC Model Path',
 						name: 'pncModel',
 						type: 'string',
 						default: '',
-						description: 'Path to a PnC BERT GGUF for automatic punctuation and casing. On by default — leave empty to auto-download the official model. Self-punctuating ASR models ignore it with a warning.',
+						description: 'Path to a PnC BERT GGUF. Only used when Enable PnC is on — leave empty to auto-download the official model.',
 					},
 					// Translation (NMT)
 					{
@@ -691,20 +698,22 @@ export class NemoSpeech implements INodeType {
 			if (options.endpointing) args.push('--endpointing');
 			if (options.vadBasedEou) args.push('--vad-based-eou');
 
-			// Postprocessing. ITN and PnC are on by default (auto-downloaded from
-			// official converted sources) — nemo-speech itself no-ops with a
-			// warning when the loaded ASR model already self-punctuates or when
-			// ITN grammars don't apply, so this is safe to leave on unconditionally.
+			// Postprocessing. ITN and PnC are opt-in: auto-downloaded from official
+			// converted sources on first use. Off by default means simply omitting
+			// both flags — NOT passing --verbatim/--no-punctuation, since those
+			// force lowercase/unpunctuated rendering and strip the casing and
+			// punctuation a self-punctuating model (e.g. parakeet-tdt) already
+			// bakes into its own output. Enabling adds the separate BERT-based
+			// PnC pass / Sparrowhawk ITN grammars on top of whatever the ASR
+			// head already produced.
 			if (options.profanityList) args.push('--profanity-list', String(options.profanityList));
-			if (!options.verbatim) {
+			if (options.itn) {
 				const itnDir = options.itnModelDir
 					? String(options.itnModelDir)
 					: await ensureItnConfigs(modelDir);
 				args.push('--itn-model-dir', itnDir);
-			} else {
-				args.push('--verbatim');
 			}
-			{
+			if (options.pnc) {
 				const pncPath = options.pncModel
 					? String(options.pncModel)
 					: await ensureCompanionModel(modelDir, PNC_MODEL_FILENAME, DEFAULT_PNC_MODEL_URL);

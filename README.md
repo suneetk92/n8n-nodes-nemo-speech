@@ -45,8 +45,8 @@ translation (NMT). Companion models are auto-downloaded from official sources on
 | Capability | On by default? | Notes |
 |---|---|---|
 | ASR transcription | ✅ always | `parakeet-tdt-0.6b-v3` (self-punctuating, multilingual). |
-| PnC (punctuation/casing) | ✅ auto | No-ops with a warning on self-punctuating models (e.g. parakeet-tdt); restores case/punctuation for plain-text models (e.g. parakeet-ctc). |
-| ITN (inverse text normalization) | ✅ auto | "twenty twenty four" → "2024". Set **Verbatim** to disable. |
+| PnC (punctuation/casing) | opt-in (`pnc`) | No-ops with a warning on self-punctuating models (e.g. parakeet-tdt), which already produce their own casing/punctuation; restores it for plain-text models (e.g. parakeet-ctc). |
+| ITN (inverse text normalization) | opt-in (`itn`) | "twenty twenty four" → "2024". Adds marginal value on top of self-punctuating models (mainly ordinals/symbols); more useful for plain-text models. |
 | Speaker diarization | opt-in (`diarize`) | Auto-downloads NVIDIA's `Nemotron-3-Diarization` model; tags each word with a 1-based speaker id (JSON output). |
 | VAD masking / VAD-based endpointing | opt-in (`vadMasking` / `vadBasedEou`) | Auto-downloads the official Silero VAD 6.2.3 model. |
 | Translation (NMT) | opt-in (`translateTo`) | Auto-downloads NVIDIA's `Riva-Translate-4B-Instruct-v2` model (4.2 GB) on first use. |
@@ -84,9 +84,10 @@ translation (NMT). Companion models are auto-downloaded from official sources on
 | **Options → Output RTTM (Diarization)** | — (runs `nemo-speech diarize`) | Also run the standalone `diarize` subcommand and attach an RTTM file as an `rttm` binary property. Requires **Diarize** enabled. |
 | **Options → Endpointing** | `--endpointing` | Mid-stream end-of-utterance detection. |
 | **Options → Profanity List Path** | `--profanity-list` | Path to a profanity filter file. |
-| **Options → ITN Model Dir** | `--itn-model-dir` | On by default — leave empty to auto-download the official multi-language grammars. |
-| **Options → Verbatim (Disable ITN)** | `--verbatim` | Skip inverse text normalization. |
-| **Options → PnC Model Path** | `--pnc-model` | On by default — leave empty to auto-download the official model. |
+| **Options → Enable ITN** | `--itn-model-dir` (when on) | Off by default. Auto-downloads the official multi-language grammars on first use. |
+| **Options → ITN Model Dir** | `--itn-model-dir` | Custom grammar directory; only used when Enable ITN is on. |
+| **Options → Enable PnC** | `--pnc-model` (when on) | Off by default. Auto-downloads the official PnC BERT model on first use. |
+| **Options → PnC Model Path** | `--pnc-model` | Custom PnC GGUF path; only used when Enable PnC is on. |
 | **Options → Translate To** | `--translate-to` | Target language code (e.g. `es`, `de`, `fr`, `zh`). Enables translation. |
 | **Options → NMT Model Path** | `--nmt-model` | Leave empty to auto-download the official Riva-Translate-4B model. |
 | **Options → Speech Context** | `--speech-context` | Comma-separated words to boost in the transcript. |
