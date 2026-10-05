@@ -38,15 +38,17 @@ jobs:
               libprotobuf-dev protobuf-compiler libre2-dev libabsl-dev zlib1g-dev \
               2>&1 | tail -1
             cd /tmp
-            git clone --depth 1 https://github.com/NVIDIA/NeMo-Speech.cpp.git nemo-src 2>&1 | tail -1
+            git clone https://github.com/NVIDIA/NeMo-Speech.cpp.git nemo-src 2>&1 | tail -1
             cd nemo-src
+            git checkout 0f706e43cf1fbc031bad1423e05460d3acaeaa1c
             git submodule update --init ggml llama.cpp 2>&1 | tail -3
 
-            # Force ASR/NMT libs to STATIC (hardcoded SHARED for the SDK).
+            # Force ASR/NMT/TTS libs to STATIC (hardcoded SHARED for the SDK).
             sed -i "s/add_library(nemo_speech_asr SHARED/add_library(nemo_speech_asr STATIC/" src/asr/CMakeLists.txt
             sed -i "s/add_library(nemo_speech_asr_c SHARED/add_library(nemo_speech_asr_c STATIC/" src/asr/CMakeLists.txt
             sed -i "s/add_library(nemo_speech_nmt SHARED/add_library(nemo_speech_nmt STATIC/" src/nmt/CMakeLists.txt
             sed -i "s/add_library(nemo_speech_nmt_c SHARED/add_library(nemo_speech_nmt_c STATIC/" src/nmt/CMakeLists.txt
+            sed -i "s/add_library(nemo_speech_tts SHARED/add_library(nemo_speech_tts STATIC/" src/tts/magpietts/CMakeLists.txt
 
             # Static SentencePiece (required for a fully static binary).
             PREFIX=/tmp/nemo-deps/sentencepiece bash scripts/build_sentencepiece_static.sh 2>&1 | tail -3
@@ -74,7 +76,7 @@ jobs:
               -DNEMO_SPEECH_BUILD_NMT=ON \
               -DNEMO_SPEECH_WITH_NORM=ON \
               -DNEMO_SPEECH_BUILD_CLI=ON \
-              -DNEMO_SPEECH_BUILD_TTS=OFF \
+              -DNEMO_SPEECH_BUILD_TTS=ON \
               -DNEMO_SPEECH_BUILD_HTTP=OFF \
               -DNEMO_SPEECH_BUILD_GRPC=OFF \
               -DNEMO_SPEECH_BUILD_MIC_CAPTURE=OFF \
@@ -164,15 +166,17 @@ jobs:
               libprotobuf-dev protobuf-compiler libre2-dev libabsl-dev zlib1g-dev \
               2>&1 | tail -1
             cd /tmp
-            git clone --depth 1 https://github.com/NVIDIA/NeMo-Speech.cpp.git nemo-src 2>&1 | tail -1
+            git clone https://github.com/NVIDIA/NeMo-Speech.cpp.git nemo-src 2>&1 | tail -1
             cd nemo-src
+            git checkout 0f706e43cf1fbc031bad1423e05460d3acaeaa1c
             git submodule update --init ggml llama.cpp 2>&1 | tail -3
 
+            # Force ASR/NMT/TTS libs to STATIC (hardcoded SHARED for the SDK).
             sed -i "s/add_library(nemo_speech_asr SHARED/add_library(nemo_speech_asr STATIC/" src/asr/CMakeLists.txt
             sed -i "s/add_library(nemo_speech_asr_c SHARED/add_library(nemo_speech_asr_c STATIC/" src/asr/CMakeLists.txt
             sed -i "s/add_library(nemo_speech_nmt SHARED/add_library(nemo_speech_nmt STATIC/" src/nmt/CMakeLists.txt
             sed -i "s/add_library(nemo_speech_nmt_c SHARED/add_library(nemo_speech_nmt_c STATIC/" src/nmt/CMakeLists.txt
-
+            sed -i "s/add_library(nemo_speech_tts SHARED/add_library(nemo_speech_tts STATIC/" src/tts/magpietts/CMakeLists.txt
             PREFIX=/tmp/nemo-deps/sentencepiece bash scripts/build_sentencepiece_static.sh 2>&1 | tail -3
 
             git apply /patches/static-itn-build.patch
@@ -195,7 +199,7 @@ jobs:
               -DNEMO_SPEECH_BUILD_MIC_CAPTURE=OFF \
               -DNEMO_SPEECH_BUILD_EXAMPLES=OFF \
               -DNEMO_SPEECH_BUILD_TESTS=OFF \
-              -DNEMO_SPEECH_BUILD_TOOLS=OFF \
+              -DNEMO_SPEECH_BUILD_TTS=ON \
               -DNEMO_SPEECH_WITH_FLASHLIGHT=OFF \
               -DNEMO_SPEECH_GGML_PATCHED=OFF \
               -DNEMO_SPEECH_DEPENDENCY_PREFIX=/tmp/nemo-deps \

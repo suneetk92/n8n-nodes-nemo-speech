@@ -248,7 +248,7 @@ async function resolveModelFromHfOrPath(
 	modelParam: string,
 	modelDir: string,
 	modelIndexPath: string,
-	role: 'asr' | 'diarization' | 'pnc' | 'nmt' = 'asr',
+	role: 'asr' | 'diarization' | 'pnc' | 'nmt' | 'tts' | 'codec' = 'asr',
 	fallbackFilename?: string,
 	fallbackUrl?: string,
 ): Promise<string> {
@@ -335,25 +335,93 @@ async function resolveAsrModel(
 
 export class NemoSpeech implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'NeMo Speech (Speech to Text)',
+		displayName: 'NeMo Speech',
 		name: 'nemoSpeech',
 		icon: 'file:../../icons/nemo-speech.svg',
 		group: ['transform'],
 		version: 1,
 		description:
-			'Transcribe audio to text using NeMo-Speech.cpp with the parakeet-tdt-0.6b-v3 model (Q8_0 GGUF). Runs fully offline on CPU.',
+			'Offline Speech to Text (ASR) and Text to Speech (TTS) using NeMo-Speech.cpp with NVIDIA models (Parakeet, Nemotron, MagpieTTS). Runs fully on CPU.',
 		defaults: {
-			name: 'NeMo Speech STT',
+			name: 'NeMo Speech',
 		},
 		usableAsTool: true,
 		inputs: [NodeConnectionTypes.Main],
 		outputs: [NodeConnectionTypes.Main],
 		properties: [
-			// --- Input source ---
+			// --- Operation Mode ---
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				options: [
+					{
+						name: 'Speech to Text (Transcribe)',
+						value: 'transcribe',
+						description: 'Transcribe audio to text with optional diarization, VAD, and translation',
+					},
+					{
+						name: 'Text to Speech (Synthesize)',
+						value: 'synthesize',
+						description: 'Synthesize spoken audio from text using MagpieTTS and NanoCodec',
+					},
+				],
+				default: 'transcribe',
+			},
+			// --- TTS inputs ---
+			{
+				displayName: 'Text to Speak',
+				name: 'text',
+				type: 'string',
+				typeOptions: {
+					rows: 3,
+				},
+				displayOptions: {
+					show: {
+						operation: ['synthesize'],
+					},
+				},
+				default: '',
+				required: true,
+				description: 'The text to convert to spoken audio.',
+			},
+			{
+				displayName: 'Voice / Speaker',
+				name: 'voice',
+				type: 'string',
+				displayOptions: {
+					show: {
+						operation: ['synthesize'],
+					},
+				},
+				default: '',
+				placeholder: 'e.g. 0 or voice name',
+				description: 'Speaker name or index for multi-speaker synthesis. Leave empty for default.',
+			},
+			{
+				displayName: 'Language Code',
+				name: 'ttsLanguage',
+				type: 'string',
+				displayOptions: {
+					show: {
+						operation: ['synthesize'],
+					},
+				},
+				default: 'en-US',
+				placeholder: 'e.g. en-US, es-ES, de-DE',
+				description: 'Language code of the input text.',
+			},
+			// --- STT Input source ---
 			{
 				displayName: 'Input',
 				name: 'inputType',
 				type: 'options',
+				displayOptions: {
+					show: {
+						operation: ['transcribe'],
+					},
+				},
 				options: [
 					{ name: 'Binary (from previous node)', value: 'binary' },
 					{ name: 'URL', value: 'url' },
@@ -365,7 +433,12 @@ export class NemoSpeech implements INodeType {
 				displayName: 'Audio URL',
 				name: 'audioUrl',
 				type: 'string',
-				displayOptions: { show: { inputType: ['url'] } },
+				displayOptions: {
+					show: {
+						operation: ['transcribe'],
+						inputType: ['url'],
+					},
+				},
 				default: '',
 				required: true,
 				description: 'URL of the audio file (wav, mp3, flac, ogg, m4a).',
@@ -374,15 +447,26 @@ export class NemoSpeech implements INodeType {
 				displayName: 'Binary Property',
 				name: 'binaryProperty',
 				type: 'string',
-				displayOptions: { show: { inputType: ['binary'] } },
+				displayOptions: {
+					show: {
+						operation: ['transcribe'],
+						inputType: ['binary'],
+					},
+				},
 				default: 'data',
 				description: 'Name of the binary property on the input item that holds the audio.',
 			},
 			// --- Top-level toggles ---
+			// --- STT Top-level toggles ---
 			{
 				displayName: 'Output Format',
 				name: 'format',
 				type: 'options',
+				displayOptions: {
+					show: {
+						operation: ['transcribe'],
+					},
+				},
 				options: [
 					{ name: 'Plain text', value: 'text' },
 					{ name: 'JSON (with timestamps)', value: 'json' },
@@ -396,6 +480,11 @@ export class NemoSpeech implements INodeType {
 				displayName: 'VAD Masking',
 				name: 'vadMasking',
 				type: 'boolean',
+				displayOptions: {
+					show: {
+						operation: ['transcribe'],
+					},
+				},
 				default: false,
 				description: 'Enable VAD feature masking (auto-downloads the official Silero 6.2.3 model if no path is set in Options).',
 			},
@@ -403,6 +492,11 @@ export class NemoSpeech implements INodeType {
 				displayName: 'Diarize',
 				name: 'diarize',
 				type: 'boolean',
+				displayOptions: {
+					show: {
+						operation: ['transcribe'],
+					},
+				},
 				default: false,
 				description: 'Enable speaker diarization (auto-downloads the default Nemotron-3-Diarization model).',
 			},
@@ -410,6 +504,11 @@ export class NemoSpeech implements INodeType {
 				displayName: 'Endpointing',
 				name: 'endpointing',
 				type: 'boolean',
+				displayOptions: {
+					show: {
+						operation: ['transcribe'],
+					},
+				},
 				default: false,
 				description: 'Enable mid-stream end-of-utterance detection (multiple finals).',
 			},
@@ -417,6 +516,11 @@ export class NemoSpeech implements INodeType {
 				displayName: 'Enable ITN',
 				name: 'itn',
 				type: 'boolean',
+				displayOptions: {
+					show: {
+						operation: ['transcribe'],
+					},
+				},
 				default: false,
 				description: 'Enable inverse text normalization ("twenty twenty four" → "2024"). Opt-in — auto-downloads the official multi-language grammars (en, es, de, ...) on first use. Self-punctuating ASR models (e.g. parakeet-tdt) already normalize most cardinals themselves, so this mainly helps ordinals/symbols or plain-text models like parakeet-ctc.',
 			},
@@ -424,6 +528,11 @@ export class NemoSpeech implements INodeType {
 				displayName: 'Enable PnC',
 				name: 'pnc',
 				type: 'boolean',
+				displayOptions: {
+					show: {
+						operation: ['transcribe'],
+					},
+				},
 				default: false,
 				description: 'Enable automatic punctuation and capitalization. Opt-in — auto-downloads the official PnC BERT model on first use. No-ops with a warning on self-punctuating models (e.g. parakeet-tdt); restores punctuation/casing for plain-text models (e.g. parakeet-ctc).',
 			},
@@ -431,6 +540,11 @@ export class NemoSpeech implements INodeType {
 				displayName: 'Translate To',
 				name: 'translateTo',
 				type: 'string',
+				displayOptions: {
+					show: {
+						operation: ['transcribe'],
+					},
+				},
 				default: '',
 				placeholder: 'e.g. es, de, fr, zh',
 				description: 'Target language code. Enables translation via the official Riva-Translate-4B-Instruct-v2 model (auto-downloaded, 4.2 GB). Leave empty to disable.',
@@ -439,6 +553,11 @@ export class NemoSpeech implements INodeType {
 				displayName: 'Write Text File',
 				name: 'outputTxt',
 				type: 'boolean',
+				displayOptions: {
+					show: {
+						operation: ['transcribe'],
+					},
+				},
 				default: false,
 				description: 'Also write the transcript to a .txt file (returned as a binary property).',
 			},
@@ -807,6 +926,53 @@ export class NemoSpeech implements INodeType {
 						default: '',
 						description: 'Base path (without extension) for the .txt output. Requires "Write Text File".',
 					},
+					// TTS Model & Config (only when operation = synthesize)
+					{
+						displayName: 'TTS Model',
+						name: 'ttsModelSelect',
+						type: 'options',
+						options: [
+							{
+								name: 'MagpieTTS Multilingual 357M (Default)',
+								value: 'nvidia/magpie_tts_multilingual_357m',
+								description: 'Hugging Face: nvidia/magpie_tts_multilingual_357m. Multilingual Text-to-Speech model.',
+							},
+							{
+								name: 'Custom (Hugging Face ID or Local Path)',
+								value: 'custom',
+								description: 'Specify custom Hugging Face repo ID or local MagpieTTS .gguf path.',
+							},
+						],
+						default: 'nvidia/magpie_tts_multilingual_357m',
+						description: 'Select the Text-to-Speech model or specify a custom path.',
+					},
+					{
+						displayName: 'Custom TTS Model (HF ID or File Path)',
+						name: 'ttsModel',
+						type: 'string',
+						displayOptions: {
+							show: {
+								ttsModelSelect: ['custom'],
+							},
+						},
+						default: '',
+						placeholder: 'e.g. nvidia/magpie_tts_multilingual_357m or /path/to/magpie.gguf',
+						description: 'Custom path or Hugging Face repo ID for MagpieTTS model.',
+					},
+					{
+						displayName: 'TTS Sample Rate (Hz)',
+						name: 'ttsSampleRate',
+						type: 'number',
+						default: 22050,
+						description: 'Output audio sample rate in Hz (8000 through model rate, default 22050).',
+					},
+					{
+						displayName: 'TTS Temperature',
+						name: 'ttsTemperature',
+						type: 'number',
+						default: 0.8,
+						description: 'Sampling temperature for speech synthesis.',
+					},
 				],
 			},
 		],
@@ -828,7 +994,91 @@ export class NemoSpeech implements INodeType {
 			);
 		}
 
+		const operation = (this.getNodeParameter('operation', 0, 'transcribe') as string) || 'transcribe';
 		const options = (this.getNodeParameter('options', 0, {}) as IDataObject) || {};
+
+		// Model dir for auto-downloads
+		const modelDir = path.join(CACHE_DIR, 'models');
+		fs.mkdirSync(modelDir, { recursive: true });
+		const modelIndexPath = path.join(path.dirname(nemoSpeech), 'model-index.json');
+
+		const results: INodeExecutionData[] = [];
+
+		// =========================================================================
+		// Operation: Synthesize (Text to Speech)
+		// =========================================================================
+		if (operation === 'synthesize') {
+			const ttsSelect = (options.ttsModelSelect as string) || 'nvidia/magpie_tts_multilingual_357m';
+			const ttsModelParam = ttsSelect === 'custom'
+				? ((options.ttsModel as string) || '')
+				: ttsSelect;
+
+			let resolvedTtsModel: string;
+			try {
+				resolvedTtsModel = await resolveModelFromHfOrPath(
+					ttsModelParam || 'nvidia/magpie_tts_multilingual_357m',
+					modelDir,
+					modelIndexPath,
+					'tts',
+				);
+			} catch (e) {
+				throw new NodeOperationError(node, `Failed to resolve or download TTS model: ${(e as Error).message}`);
+			}
+
+			for (let i = 0; i < items.length; i++) {
+				const textToSpeak = (this.getNodeParameter('text', i, '') as string) || '';
+				const voice = (this.getNodeParameter('voice', i, '') as string) || '';
+				const language = (this.getNodeParameter('ttsLanguage', i, 'en-US') as string) || 'en-US';
+				const sampleRate = options.ttsSampleRate ? Number(options.ttsSampleRate) : 22050;
+				const temperature = options.ttsTemperature ? Number(options.ttsTemperature) : 0.8;
+
+				const tmpWav = path.join(os.tmpdir(), `nemo-tts-${Date.now()}-${i}.wav`);
+				const args: string[] = ['synthesize', textToSpeak, '-o', tmpWav, '--language', language];
+				if (resolvedTtsModel) args.push('--magpie-model', resolvedTtsModel);
+				if (voice) args.push('--voice', voice);
+				if (sampleRate) args.push('--sample-rate', String(sampleRate));
+				if (temperature) args.push('--temperature', String(temperature));
+				args.push('--force');
+
+				const env: NodeJS.ProcessEnv = { ...process.env };
+				env.NEMO_SPEECH_MODEL_DIR = modelDir;
+				if (options.threads != null) env.OMP_NUM_THREADS = String(options.threads);
+
+				try {
+					await execFileAsync(nemoSpeech, args, {
+						maxBuffer: 64 * 1024 * 1024,
+						timeout: 5 * 60 * 1000,
+						env,
+					});
+					const audioBuf = fs.readFileSync(tmpWav);
+					const binData = await this.helpers.prepareBinaryData(audioBuf, `speech-${i}.wav`, 'audio/wav');
+					results.push({
+						json: {
+							text: textToSpeak,
+							language,
+							voice: voice || 'default',
+							sampleRate,
+						},
+						binary: {
+							data: binData,
+						},
+					});
+				} catch (e) {
+					const err = e as ExecException & { code?: number | string };
+					throw new NodeOperationError(
+						node,
+						`nemo-speech synthesize failed (exit ${err.code ?? 'unknown'}): ${(err.stderr || err.message).toString().slice(-2000)}`,
+					);
+				} finally {
+					try { fs.unlinkSync(tmpWav); } catch { /* ignore */ }
+				}
+			}
+			return [results];
+		}
+
+		// =========================================================================
+		// Operation: Transcribe (Speech to Text)
+		// =========================================================================
 		const asrSelect = (options.asrModelSelect as string) || 'nvidia/parakeet-tdt-0.6b-v3';
 		const modelParam = asrSelect === 'custom'
 			? ((options.modelPath as string) || '')
@@ -844,14 +1094,6 @@ export class NemoSpeech implements INodeType {
 		const translateTo = (this.getNodeParameter('translateTo', 0, '') as string) || '';
 		const outputTxt = this.getNodeParameter('outputTxt', 0, false) as boolean;
 
-		// Model dir for auto-download of the default indexed model.
-		const modelDir = path.join(CACHE_DIR, 'models');
-		fs.mkdirSync(modelDir, { recursive: true });
-
-		// Resolve the ASR model to a local path ourselves (see resolveAsrModel):
-		// the binary's own auto-downloader needs `curl`, which isn't guaranteed
-		// to exist on minimal target images.
-		const modelIndexPath = path.join(path.dirname(nemoSpeech), 'model-index.json');
 		let resolvedModelPath: string;
 		try {
 			resolvedModelPath = await resolveAsrModel(
@@ -862,8 +1104,6 @@ export class NemoSpeech implements INodeType {
 		} catch (e) {
 			throw new NodeOperationError(node, `Failed to resolve or download ASR model "${modelParam}": ${(e as Error).message}`);
 		}
-
-		const results: INodeExecutionData[] = [];
 
 		for (let i = 0; i < items.length; i++) {
 			const item = items[i];

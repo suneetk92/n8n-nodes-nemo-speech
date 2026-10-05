@@ -37,20 +37,19 @@ is specific to that implementation, not the model.
 
 ## Features
 
-The static binary is built with **every** NeMo-Speech.cpp capability enabled: ASR, speaker
-diarization, VAD, punctuation/capitalization (PnC), inverse text normalization (ITN), and
-translation (NMT). Companion models are auto-downloaded from official sources on first use — see
-[Companion models](#companion-models-auto-downloaded) below.
+The static binary is built with **every** NeMo-Speech.cpp capability enabled: ASR, Text-to-Speech (TTS),
+speaker diarization, VAD, punctuation/capitalization (PnC), inverse text normalization (ITN), and
+translation (NMT). Models and companion assets are auto-downloaded from official sources on first use.
 
-| Capability | On by default? | Notes |
+| Capability | Mode / Trigger | Notes |
 |---|---|---|
-| ASR transcription | ✅ always | `parakeet-tdt-0.6b-v3` (self-punctuating, multilingual). |
-| PnC (punctuation/casing) | opt-in (`pnc`) | No-ops with a warning on self-punctuating models (e.g. parakeet-tdt), which already produce their own casing/punctuation; restores it for plain-text models (e.g. parakeet-ctc). |
-| ITN (inverse text normalization) | opt-in (`itn`) | "twenty twenty four" → "2024". Adds marginal value on top of self-punctuating models (mainly ordinals/symbols); more useful for plain-text models. |
-| Speaker diarization | opt-in (`diarize`) | Auto-downloads NVIDIA's `Nemotron-3-Diarization` model; tags each word with a 1-based speaker id (JSON output). |
-| VAD masking / VAD-based endpointing | opt-in (`vadMasking` / `vadBasedEou`) | Auto-downloads the official Silero VAD 6.2.3 model. |
-| Translation (NMT) | opt-in (`translateTo`) | Auto-downloads NVIDIA's `Riva-Translate-4B-Instruct-v2` model (4.2 GB) on first use. |
-
+| **Speech to Text (ASR)** | Operation: `transcribe` | `parakeet-tdt-0.6b-v3` (default), `nemotron-3.5-asr-streaming-0.6b`, or custom HF model. |
+| **Text to Speech (TTS)** | Operation: `synthesize` | `magpie_tts_multilingual_357m` with NanoCodec. Generates audio/wav. |
+| **Speaker diarization** | opt-in (`diarize`) | Auto-downloads NVIDIA's `Nemotron-3-Diarization` model; tags each word with a 1-based speaker id (JSON output). |
+| **VAD masking / endpointing** | opt-in (`vadMasking` / `vadBasedEou`) | Auto-downloads the official Silero VAD 6.2.3 model. |
+| **PnC (punctuation/casing)** | opt-in (`pnc`) | Restores punctuation/casing for plain-text models (e.g. parakeet-ctc). |
+| **ITN (inverse text normalization)** | opt-in (`itn`) | "twenty twenty four" → "2024". |
+| **Translation (NMT)** | opt-in (`translateTo`) | Auto-downloads NVIDIA's `Riva-Translate-4B-Instruct-v2` model (4.2 GB). |
 ## Node inputs
 
 | Input | Maps to `nemo-speech` | Description |
