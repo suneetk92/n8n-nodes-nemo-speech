@@ -37,14 +37,13 @@ is specific to that implementation, not the model.
 
 ## Features
 
-The static binary is built with **every** NeMo-Speech.cpp capability enabled: ASR, Text-to-Speech (TTS),
-speaker diarization, VAD, punctuation/capitalization (PnC), inverse text normalization (ITN), and
+The static binary is built with NeMo-Speech.cpp's ASR core: speech recognition (ASR), speaker
+diarization, VAD, punctuation/capitalization (PnC), inverse text normalization (ITN), and
 translation (NMT). Models and companion assets are auto-downloaded from official sources on first use.
 
 | Capability | Mode / Trigger | Notes |
 |---|---|---|
 | **Speech to Text (ASR)** | Operation: `transcribe` | `parakeet-tdt-0.6b-v3` (default), `nemotron-3.5-asr-streaming-0.6b`, or custom HF model. |
-| **Text to Speech (TTS)** | Operation: `synthesize` | `magpie_tts_multilingual_357m` with NanoCodec. Generates audio/wav. |
 | **Speaker diarization** | opt-in (`diarize`) | Auto-downloads NVIDIA's `Nemotron-3-Diarization` model; tags each word with a 1-based speaker id (JSON output). |
 | **VAD masking / endpointing** | opt-in (`vadMasking` / `vadBasedEou`) | Auto-downloads the official Silero VAD 6.2.3 model. |
 | **PnC (punctuation/casing)** | opt-in (`pnc`) | Restores punctuation/casing for plain-text models (e.g. parakeet-ctc). |
