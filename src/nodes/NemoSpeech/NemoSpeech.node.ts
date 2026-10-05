@@ -51,6 +51,33 @@ const DEFAULT_ITN_CONFIGS_URL = COMPANIONS_BASE_URL + ITN_CONFIGS_FILENAME;
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
+/** Fetch JSON from a URL with standard user agent. */
+function fetchJson<T = any>(url: string): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const reqMod = url.startsWith('https:') ? https : http;
+		const req = reqMod.get(url, { headers: { 'User-Agent': 'n8n-nodes-nemo-speech' } }, (res) => {
+			if ((res.statusCode ?? 0) >= 300 && (res.statusCode ?? 0) < 400 && res.headers.location) {
+				res.resume();
+				return fetchJson<T>(res.headers.location).then(resolve, reject);
+			}
+			if ((res.statusCode ?? 0) !== 200) {
+				res.resume();
+				return reject(new Error(`HTTP ${res.statusCode} fetching ${url}`));
+			}
+			let data = '';
+			res.setEncoding('utf8');
+			res.on('data', (chunk) => { data += chunk; });
+			res.on('end', () => {
+				try {
+					resolve(JSON.parse(data) as T);
+				} catch (e) {
+					reject(e);
+				}
+			});
+		});
+		req.on('error', reject);
+	});
+}
 /** Resolve a URL through redirects (no body) to its final location. */
 function resolveFinalUrl(url: string, attempt = 0): Promise<string> {
 	return new Promise((resolve, reject) => {
@@ -211,46 +238,95 @@ async function ensureItnConfigs(modelDir: string): Promise<string> {
 }
 
 /**
- * Resolve the --model argument to a local .gguf path, downloading it via
- * Node's own HTTPS client (through ensureCompanionModel) instead of the
- * nemo-speech binary's own internal downloader, which shells out to `curl`
- * — unavailable on minimal images (e.g. this project's target Alpine/musl
- * n8n container). Local paths pass through unchanged. Indexed names/aliases
- * (e.g. the default "nvidia/parakeet-tdt-0.6b-v3", or short aliases like
- * "parakeet-ctc") are looked up in the bundled model-index.json to find the
- * HF repo/revision/filename, then downloaded to modelDir just like the
- * companion models.
+ * Resolve any model parameter (ASR, Diarization, PnC, NMT) to a local file.
+ * 1. If it's already an existing local file path, return it immediately.
+ * 2. If it's found in the bundled model-index.json, resolve via index.
+ * 3. If it looks like a Hugging Face repo ID ("owner/name"), query HF API to
+ *    locate the .gguf file, download via Node's native HTTPS client, and return local path.
  */
+async function resolveModelFromHfOrPath(
+	modelParam: string,
+	modelDir: string,
+	modelIndexPath: string,
+	role: 'asr' | 'diarization' | 'pnc' | 'nmt' = 'asr',
+	fallbackFilename?: string,
+	fallbackUrl?: string,
+): Promise<string> {
+	if (!modelParam) {
+		if (fallbackFilename && fallbackUrl) {
+			return ensureCompanionModel(modelDir, fallbackFilename, fallbackUrl);
+		}
+		return '';
+	}
+	if (fs.existsSync(modelParam)) return modelParam;
+
+	// Check local model-index.json first if available
+	if (fs.existsSync(modelIndexPath)) {
+		try {
+			const index = JSON.parse(fs.readFileSync(modelIndexPath, 'utf-8')) as {
+				models: Array<{
+					repo: string;
+					aliases?: string[];
+					revision: string;
+					artifacts: Array<{ role: string; filename: string }>;
+				}>;
+			};
+			const needle = modelParam.toLowerCase();
+			const shortRepo = needle.includes('/') ? needle.slice(needle.lastIndexOf('/') + 1) : needle;
+			const entry = index.models.find((m) => {
+				if (m.repo.toLowerCase() === needle) return true;
+				if (m.repo.toLowerCase().endsWith('/' + shortRepo)) return true;
+				return (m.aliases || []).some((a) => a.toLowerCase() === needle);
+			});
+			if (entry) {
+				const artifact = entry.artifacts.find((a) => a.role === role) || entry.artifacts[0];
+				if (artifact) {
+					const url = `https://huggingface.co/${entry.repo}/resolve/${entry.revision}/${artifact.filename}`;
+					return ensureCompanionModel(modelDir, artifact.filename, url);
+				}
+			}
+		} catch (e) {
+			// ignore index read error and fallback to HF API
+		}
+	}
+
+	// If modelParam looks like an owner/repo HF identifier
+	if (modelParam.includes('/') && !modelParam.startsWith('http://') && !modelParam.startsWith('https://')) {
+		try {
+			const apiUrl = `https://huggingface.co/api/models/${modelParam}`;
+			const repoData = await fetchJson<{
+				sha?: string;
+				siblings?: Array<{ rfilename: string }>;
+			}>(apiUrl);
+			const revision = repoData.sha || 'main';
+			const ggufSibling = (repoData.siblings || []).find((s) => s.rfilename.endsWith('.gguf'));
+			if (ggufSibling) {
+				const filename = path.basename(ggufSibling.rfilename);
+				const url = `https://huggingface.co/${modelParam}/resolve/${revision}/${ggufSibling.rfilename}`;
+				return ensureCompanionModel(modelDir, filename, url);
+			}
+		} catch (e) {
+			// if HF API query fails, continue to fallback
+		}
+	}
+
+	if (fallbackFilename && fallbackUrl) {
+		return ensureCompanionModel(modelDir, fallbackFilename, fallbackUrl);
+	}
+	return modelParam;
+}
+
 async function resolveAsrModel(
 	modelParam: string,
 	modelDir: string,
 	modelIndexPath: string,
 ): Promise<string> {
-	if (fs.existsSync(modelParam)) return modelParam;
-	if (!fs.existsSync(modelIndexPath)) return modelParam; // no index bundled; let the CLI try (will fail without curl)
-
-	const index = JSON.parse(fs.readFileSync(modelIndexPath, 'utf-8')) as {
-		models: Array<{
-			repo: string;
-			aliases?: string[];
-			revision: string;
-			artifacts: Array<{ role: string; filename: string }>;
-		}>;
-	};
-	const needle = modelParam.toLowerCase();
-	const shortRepo = needle.includes('/') ? needle.slice(needle.lastIndexOf('/') + 1) : needle;
-	const entry = index.models.find((m) => {
-		if (m.repo.toLowerCase() === needle) return true;
-		if (m.repo.toLowerCase().endsWith('/' + shortRepo)) return true;
-		return (m.aliases || []).some((a) => a.toLowerCase() === needle);
-	});
-	if (!entry) return modelParam; // unknown name; let the CLI try (will fail without curl)
-
-	const artifact = entry.artifacts.find((a) => a.role === 'asr') || entry.artifacts[0];
-	if (!artifact) return modelParam;
-
-	const url = `https://huggingface.co/${entry.repo}/resolve/${entry.revision}/${artifact.filename}`;
-	return ensureCompanionModel(modelDir, artifact.filename, url);
+	return resolveModelFromHfOrPath(
+		modelParam || 'nvidia/parakeet-tdt-0.6b-v3',
+		modelDir,
+		modelIndexPath,
+		'asr',
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -374,15 +450,54 @@ export class NemoSpeech implements INodeType {
 				placeholder: 'Add option',
 				default: {},
 				options: [
-					// Model
+					// Main ASR Model Selection
 					{
-						displayName: 'Model Path',
+						displayName: 'ASR Model',
+						name: 'asrModelSelect',
+						type: 'options',
+						options: [
+							{
+								name: 'Parakeet TDT 0.6B v3 (Default / Recommended — Fast CPU, English)',
+								value: 'nvidia/parakeet-tdt-0.6b-v3',
+								description: 'Hugging Face: nvidia/parakeet-tdt-0.6b-v3. Fastest on CPU, native punctuation and digit formatting.',
+							},
+							{
+								name: 'Nemotron 3.5 ASR Streaming 0.6B (Multilingual 35 langs, Streaming RNN-T)',
+								value: 'nvidia/nemotron-3.5-asr-streaming-0.6b',
+								description: 'Hugging Face: nvidia/nemotron-3.5-asr-streaming-0.6b. Cache-aware streaming RNN-T, supports 35 languages.',
+							},
+							{
+								name: 'Nemotron Speech Streaming EN 0.6B (English, Streaming RNN-T)',
+								value: 'nvidia/nemotron-speech-streaming-en-0.6b',
+								description: 'Hugging Face: nvidia/nemotron-speech-streaming-en-0.6b. English streaming RNN-T model.',
+							},
+							{
+								name: 'Parakeet CTC 1.1B (Plain Text CTC, KenLM Boosting)',
+								value: 'nvidia/parakeet-ctc-1.1b',
+								description: 'Hugging Face: nvidia/parakeet-ctc-1.1b. Plain lowercase text, supports Flashlight beam search.',
+							},
+							{
+								name: 'Custom (Hugging Face ID or Local Path)',
+								value: 'custom',
+								description: 'Specify any Hugging Face repo ID (e.g. "owner/model") or local .gguf file path.',
+							},
+						],
+						default: 'nvidia/parakeet-tdt-0.6b-v3',
+						description: 'Select the primary ASR model or choose Custom.',
+					},
+					{
+						displayName: 'Custom ASR Model (HF ID or File Path)',
 						name: 'modelPath',
 						type: 'string',
+						displayOptions: {
+							show: {
+								asrModelSelect: ['custom'],
+							},
+						},
 						default: '',
-						placeholder: 'auto (default parakeet-tdt model)',
+						placeholder: 'e.g. nvidia/parakeet-tdt-0.6b-v3 or /path/to/model.gguf',
 						description:
-							'Path to a .gguf model file, or an indexed model name (e.g. "parakeet-tdt"). Leave empty to use the default indexed model (parakeet-tdt-0.6b-v3), auto-downloaded on first run.',
+							'Enter a Hugging Face repo ID (e.g. "nvidia/parakeet-tdt-0.6b-v3") or a local .gguf file path. Hugging Face models will be auto-downloaded.',
 					},
 					// Core
 					{
@@ -549,12 +664,43 @@ export class NemoSpeech implements INodeType {
 						description: 'Extend both segment edges by this many ms. Default 200.',
 					},
 					// Diarization
+					// Diarization Model Selection
 					{
-						displayName: 'Diar Model Path',
+						displayName: 'Diarization Model',
+						name: 'diarModelSelect',
+						type: 'options',
+						options: [
+							{
+								name: 'Nemotron-3-Diarization (Default)',
+								value: 'nvidia/Nemotron-3-Diarization',
+								description: 'Hugging Face: nvidia/Nemotron-3-Diarization (Q8_0 GGUF). Standard multi-speaker diarizer.',
+							},
+							{
+								name: 'Diar Streaming Sortformer 4spk-v2 (Streaming Sortformer)',
+								value: 'nvidia/diar_streaming_sortformer_4spk-v2',
+								description: 'Hugging Face: nvidia/diar_streaming_sortformer_4spk-v2 (Q8_0 GGUF). 4-speaker streaming diarizer.',
+							},
+							{
+								name: 'Custom (Hugging Face ID or Local Path)',
+								value: 'custom',
+								description: 'Specify custom Hugging Face repo ID or local .gguf path.',
+							},
+						],
+						default: 'nvidia/Nemotron-3-Diarization',
+						description: 'Diarizer model to use when Diarize is enabled.',
+					},
+					{
+						displayName: 'Custom Diar Model (HF ID or File Path)',
 						name: 'diarModel',
 						type: 'string',
+						displayOptions: {
+							show: {
+								diarModelSelect: ['custom'],
+							},
+						},
 						default: '',
-						description: 'Path to a diarizer GGUF. Leave empty to use the default Nemotron-3-Diarization model (auto-downloaded).',
+						placeholder: 'e.g. nvidia/Nemotron-3-Diarization or /path/to/diar.gguf',
+						description: 'Custom Hugging Face repo ID or local .gguf file path for speaker diarization.',
 					},
 					{
 						displayName: 'Output RTTM (Diarization)',
@@ -578,20 +724,72 @@ export class NemoSpeech implements INodeType {
 						default: '',
 						description: 'Path to a Sparrowhawk grammar directory. Only used when Enable ITN is on — leave empty to auto-download the official grammars.',
 					},
+					// PnC Model Selection
 					{
-						displayName: 'PnC Model Path',
+						displayName: 'PnC Model',
+						name: 'pncModelSelect',
+						type: 'options',
+						options: [
+							{
+								name: 'NVIDIA PnC BERT Base EN (Default)',
+								value: 'default',
+								description: 'Official NVIDIA punctuation_en_bert converted to Q8_0 GGUF (from suneetk/nemo-speech-companions).',
+							},
+							{
+								name: 'Custom (Hugging Face ID or Local Path)',
+								value: 'custom',
+								description: 'Specify custom Hugging Face repo ID or local .gguf file path.',
+							},
+						],
+						default: 'default',
+						description: 'Punctuation and capitalization BERT model.',
+					},
+					{
+						displayName: 'Custom PnC Model (HF ID or File Path)',
 						name: 'pncModel',
 						type: 'string',
+						displayOptions: {
+							show: {
+								pncModelSelect: ['custom'],
+							},
+						},
 						default: '',
-						description: 'Path to a PnC BERT GGUF. Only used when Enable PnC is on — leave empty to auto-download the official model.',
+						placeholder: 'e.g. /path/to/pnc.gguf or HF repo ID',
+						description: 'Custom path or HF ID for PnC BERT GGUF. Only used when Enable PnC is on.',
 					},
 					// Translation (NMT)
+					// Translation (NMT) Model Selection
 					{
-						displayName: 'NMT Model Path',
+						displayName: 'NMT Model',
+						name: 'nmtModelSelect',
+						type: 'options',
+						options: [
+							{
+								name: 'Riva-Translate-4B-Instruct-v2 (Default — 37 Languages)',
+								value: 'default',
+								description: 'Official NVIDIA Riva-Translate-4B-Instruct-v2 converted to Q8_0 GGUF (from suneetk/nemo-speech-companions).',
+							},
+							{
+								name: 'Custom (Hugging Face ID or Local Path)',
+								value: 'custom',
+								description: 'Specify custom Hugging Face repo ID or local .gguf file path.',
+							},
+						],
+						default: 'default',
+						description: 'Translation model to use when Translate To is set.',
+					},
+					{
+						displayName: 'Custom NMT Model (HF ID or File Path)',
 						name: 'nmtModel',
 						type: 'string',
+						displayOptions: {
+							show: {
+								nmtModelSelect: ['custom'],
+							},
+						},
 						default: '',
-						description: 'Path to a Riva-Translate GGUF. Leave empty to auto-download the official Riva-Translate-4B-Instruct-v2 model.',
+						placeholder: 'e.g. /path/to/nmt.gguf or HF repo ID',
+						description: 'Custom path or HF ID for Riva-Translate GGUF.',
 					},
 					// Boosting
 					{
@@ -631,7 +829,10 @@ export class NemoSpeech implements INodeType {
 		}
 
 		const options = (this.getNodeParameter('options', 0, {}) as IDataObject) || {};
-		const modelParam = (options.modelPath as string) || '';
+		const asrSelect = (options.asrModelSelect as string) || 'nvidia/parakeet-tdt-0.6b-v3';
+		const modelParam = asrSelect === 'custom'
+			? ((options.modelPath as string) || '')
+			: asrSelect;
 		const inputType = (this.getNodeParameter('inputType', 0, 'binary') as string) || 'binary';
 		const binaryProperty = (this.getNodeParameter('binaryProperty', 0, 'data') as string) || 'data';
 		const format = (this.getNodeParameter('format', 0, 'text') as string) || 'text';
@@ -654,12 +855,12 @@ export class NemoSpeech implements INodeType {
 		let resolvedModelPath: string;
 		try {
 			resolvedModelPath = await resolveAsrModel(
-				modelParam || 'nvidia/parakeet-tdt-0.6b-v3',
+				modelParam,
 				modelDir,
 				modelIndexPath,
 			);
 		} catch (e) {
-			throw new NodeOperationError(node, `Failed to download ASR model: ${(e as Error).message}`);
+			throw new NodeOperationError(node, `Failed to resolve or download ASR model "${modelParam}": ${(e as Error).message}`);
 		}
 
 		const results: INodeExecutionData[] = [];
@@ -750,14 +951,23 @@ export class NemoSpeech implements INodeType {
 			if (options.vadPadMs != null) args.push('--vad-pad-ms', String(options.vadPadMs));
 
 			// Diarization (auto-downloads the default Nemotron-3-Diarization GGUF).
+			// Diarization (auto-downloads from dropdown selection or custom HF ID).
 			let diarPath: string | undefined;
 			if (diarize) {
-				diarPath = options.diarModel
-					? String(options.diarModel)
-					: await ensureCompanionModel(modelDir, DIAR_MODEL_FILENAME, DEFAULT_DIAR_MODEL_URL);
+				const diarSelect = (options.diarModelSelect as string) || 'nvidia/Nemotron-3-Diarization';
+				const diarParam = diarSelect === 'custom'
+					? ((options.diarModel as string) || '')
+					: diarSelect;
+				diarPath = await resolveModelFromHfOrPath(
+					diarParam,
+					modelDir,
+					modelIndexPath,
+					'diarization',
+					DIAR_MODEL_FILENAME,
+					DEFAULT_DIAR_MODEL_URL,
+				);
 				args.push('--diar-model', diarPath);
 			}
-
 			// Endpointing
 			if (endpointing) args.push('--endpointing');
 			if (options.vadBasedEou) args.push('--vad-based-eou');
@@ -778,22 +988,38 @@ export class NemoSpeech implements INodeType {
 				args.push('--itn-model-dir', itnDir);
 			}
 			if (pncEnabled) {
-				const pncPath = options.pncModel
-					? String(options.pncModel)
-					: await ensureCompanionModel(modelDir, PNC_MODEL_FILENAME, DEFAULT_PNC_MODEL_URL);
+				const pncSelect = (options.pncModelSelect as string) || 'default';
+				const pncParam = pncSelect === 'custom'
+					? ((options.pncModel as string) || '')
+					: '';
+				const pncPath = await resolveModelFromHfOrPath(
+					pncParam,
+					modelDir,
+					modelIndexPath,
+					'pnc',
+					PNC_MODEL_FILENAME,
+					DEFAULT_PNC_MODEL_URL,
+				);
 				args.push('--pnc-model', pncPath);
 			}
 
 			// NMT (opt-in: translation needs an explicit target language; the
 			// official Riva-Translate-4B GGUF auto-downloads on first use).
 			if (translateTo) {
-				const nmtPath = options.nmtModel
-					? String(options.nmtModel)
-					: await ensureCompanionModel(modelDir, NMT_MODEL_FILENAME, DEFAULT_NMT_MODEL_URL);
+				const nmtSelect = (options.nmtModelSelect as string) || 'default';
+				const nmtParam = nmtSelect === 'custom'
+					? ((options.nmtModel as string) || '')
+					: '';
+				const nmtPath = await resolveModelFromHfOrPath(
+					nmtParam,
+					modelDir,
+					modelIndexPath,
+					'nmt',
+					NMT_MODEL_FILENAME,
+					DEFAULT_NMT_MODEL_URL,
+				);
 				args.push('--nmt-model', nmtPath, '--translate-to', translateTo);
 			}
-
-			// Boosting
 			if (options.speechContext) {
 				const words = String(options.speechContext).split(',').map(w => w.trim()).filter(Boolean);
 				for (const word of words) {

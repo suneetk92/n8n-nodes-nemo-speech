@@ -66,8 +66,8 @@ translation (NMT). Companion models are auto-downloaded from official sources on
 | **Enable PnC** | `--pnc-model` (when on) | Off by default. Auto-downloads the official PnC BERT model on first use. |
 | **Translate To** | `--translate-to` | Target language code (e.g. `es`, `de`, `fr`, `zh`). Enables translation (auto-downloads Riva-Translate-4B-Instruct-v2). |
 | **Write Text File** | — | Also write a `.txt` (returned as a `transcript` binary property). |
-| **Options → Model Path** | `--model` | Path to a `.gguf` file or indexed model name (e.g. `parakeet-tdt`). Leave empty for the default. |
-| **Options → Threads** | env `OMP_NUM_THREADS` | CPU threads (default 4). |
+| **Options → ASR Model** | `--model` | Select from supported models (Parakeet TDT 0.6B v3, Nemotron 3.5 ASR Streaming 0.6B, Nemotron Speech Streaming EN 0.6B, Parakeet CTC 1.1B) or Custom. Shows Hugging Face repo ID. |
+| **Options → Custom ASR Model** | `--model` | Enter any Hugging Face repo ID (e.g. `nvidia/parakeet-tdt-0.6b-v3`) or local `.gguf` file path. Auto-downloads from HF. |
 | **Options → Device** | `--device` | `cpu`, `cuda:0`, `metal`, `vulkan:0`. Default `cpu`. |
 | **Options → Stream Mode** | `--stream` | Feed audio in 160 ms chunks through the streaming recognizer. |
 | **Options → Word Timestamps** | `--word-times` | Include per-word timestamps (JSON). |
@@ -86,12 +86,12 @@ translation (NMT). Companion models are auto-downloaded from official sources on
 | **Options → VAD Model Path** | `--vad-model` | Leave empty to auto-download the official Silero 6.2.3 GGUF when VAD masking/EOU is enabled. |
 | **Options → VAD-Based Endpointing** | `--vad-based-eou` | Use the VAD timeline (instead of token-silence) for endpointing. |
 | **Options → VAD Onset/Offset/Pad** | `--vad-onset` / `--vad-offset` / `--vad-pad-ms` | VAD thresholds and padding. |
-| **Options → Diar Model Path** | `--diar-model` | Leave empty to use the default Nemotron-3-Diarization model (auto-downloaded). |
-| **Options → Output RTTM (Diarization)** | — (runs `nemo-speech diarize`) | Also run the standalone `diarize` subcommand and attach an RTTM file as an `rttm` binary property. Requires **Diarize** enabled. |
+| **Options → Diarization Model** | `--diar-model` | Select Nemotron-3-Diarization (default), Diar Streaming Sortformer 4spk-v2, or Custom. Shows Hugging Face repo ID. |
+| **Options → Custom Diar Model** | `--diar-model` | Enter custom Hugging Face repo ID or local `.gguf` file path. |
 | **Options → Profanity List Path** | `--profanity-list` | Path to a profanity filter file. |
 | **Options → ITN Model Dir** | `--itn-model-dir` | Custom grammar directory; only used when Enable ITN is on. |
-| **Options → PnC Model Path** | `--pnc-model` | Custom PnC GGUF path; only used when Enable PnC is on. |
-| **Options → NMT Model Path** | `--nmt-model` | Leave empty to auto-download the official Riva-Translate-4B-Instruct-v2 model. |
+| **Options → PnC Model** | `--pnc-model` | NVIDIA PnC BERT Base EN (default) or Custom HF repo ID / local `.gguf` path. |
+| **Options → NMT Model** | `--nmt-model` | Riva-Translate-4B-Instruct-v2 (default) or Custom HF repo ID / local `.gguf` path. |
 | **Options → Speech Context** | `--speech-context` | Comma-separated words to boost in the transcript. |
 | **Options → Output File Base Path** | — | Base path for the `.txt` output; only used when Write Text File is on. |
 
