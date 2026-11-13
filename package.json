@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-nemo-speech",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "n8n community node for NeMo-Speech.cpp — offline speech-to-text (ASR), speaker diarization, VAD, punctuation, inverse text normalization, and translation using NVIDIA models. Fully self-contained static binary.",
   "license": "MIT",
   "homepage": "https://github.com/suneetk92/n8n-nodes-nemo-speech",

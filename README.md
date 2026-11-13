@@ -65,7 +65,7 @@ translation (NMT). Models and companion assets are auto-downloaded from official
 | **Translate To** | `--translate-to` | Target language code (e.g. `es`, `de`, `fr`, `zh`). Enables translation (auto-downloads Riva-Translate-4B-Instruct-v2). |
 | **Write Text File** | — | Also write a `.txt` (returned as a `transcript` binary property). |
 | **Options → ASR Model** | `--model` | Select from supported models (Parakeet TDT 0.6B v3, Nemotron 3.5 ASR Streaming 0.6B, Nemotron Speech Streaming EN 0.6B, Parakeet CTC 1.1B) or Custom. Shows Hugging Face repo ID. |
-| **Options → Custom ASR Model** | `--model` | Enter any Hugging Face repo ID (e.g. `nvidia/parakeet-tdt-0.6b-v3`) or local `.gguf` file path. Auto-downloads from HF. |
+| **Options → Custom ASR Model** | `--model` | Enter any Hugging Face repo ID (e.g. `nvidia/parakeet-tdt-0.6b-v3`) or local `.gguf` file path. Auto-downloads from HF. Without a suffix the best quant is chosen (Q8_0 → Q6_K → Q5_K_M → Q4_K_M → F16); pick one with `owner/repo:Q4_K_M` or `owner/repo/file.gguf`. Repos with no `.gguf` raise a clear error. |
 | **Options → Device** | `--device` | `cpu`, `cuda:0`, `metal`, `vulkan:0`. Default `cpu`. |
 | **Options → Stream Mode** | `--stream` | Feed audio in 160 ms chunks through the streaming recognizer. |
 | **Options → Word Timestamps** | `--word-times` | Include per-word timestamps (JSON). |

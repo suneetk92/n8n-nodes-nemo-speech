@@ -291,23 +291,65 @@ async function resolveModelFromHfOrPath(
 	}
 
 	// If modelParam looks like an owner/repo HF identifier
+	// Supported forms:
+	//   owner/repo               -> best available quant (Q8_0 preferred)
+	//   owner/repo:Q4_K_M        -> file whose name contains that quant tag
+	//   owner/repo/file.gguf     -> exact file in the repo
 	if (modelParam.includes('/') && !modelParam.startsWith('http://') && !modelParam.startsWith('https://')) {
-		try {
-			const apiUrl = `https://huggingface.co/api/models/${modelParam}`;
-			const repoData = await fetchJson<{
-				sha?: string;
-				siblings?: Array<{ rfilename: string }>;
-			}>(apiUrl);
-			const revision = repoData.sha || 'main';
-			const ggufSibling = (repoData.siblings || []).find((s) => s.rfilename.endsWith('.gguf'));
-			if (ggufSibling) {
-				const filename = path.basename(ggufSibling.rfilename);
-				const url = `https://huggingface.co/${modelParam}/resolve/${revision}/${ggufSibling.rfilename}`;
-				return ensureCompanionModel(modelDir, filename, url);
-			}
-		} catch (e) {
-			// if HF API query fails, continue to fallback
+		let repoId = modelParam;
+		let quantTag = '';
+		let exactFile = '';
+		const colon = repoId.indexOf(':');
+		if (colon > 0) {
+			quantTag = repoId.slice(colon + 1).trim().toLowerCase();
+			repoId = repoId.slice(0, colon);
 		}
+		const parts = repoId.split('/');
+		if (parts.length > 2) {
+			repoId = parts.slice(0, 2).join('/');
+			exactFile = parts.slice(2).join('/');
+		}
+
+		let repoData: { sha?: string; siblings?: Array<{ rfilename: string }> };
+		try {
+			repoData = await fetchJson(`https://huggingface.co/api/models/${repoId}`);
+		} catch (e) {
+			throw new Error(
+				`Could not query Hugging Face repo "${repoId}" (${(e as Error).message}). ` +
+				`Check the repo ID, or provide a local .gguf path.`,
+			);
+		}
+		const revision = repoData.sha || 'main';
+		const ggufs = (repoData.siblings || [])
+			.map((s) => s.rfilename)
+			.filter((f) => f.toLowerCase().endsWith('.gguf'));
+		if (ggufs.length === 0) {
+			throw new Error(
+				`Hugging Face repo "${repoId}" contains no .gguf file (only safetensors/other formats). ` +
+				`Convert the model to GGUF first, or use a GGUF repo / local .gguf path.`,
+			);
+		}
+
+		let chosen: string | undefined;
+		if (exactFile) {
+			chosen = ggufs.find((f) => f === exactFile || path.basename(f) === exactFile);
+		} else if (quantTag) {
+			chosen = ggufs.find((f) => path.basename(f).toLowerCase().includes(quantTag));
+		} else {
+			const preference = ['q8_0', 'q6_k', 'q5_k_m', 'q4_k_m', 'f16'];
+			for (const tag of preference) {
+				chosen = ggufs.find((f) => path.basename(f).toLowerCase().includes(tag));
+				if (chosen) break;
+			}
+			chosen = chosen || ggufs[0];
+		}
+		if (!chosen) {
+			throw new Error(
+				`No .gguf matching "${exactFile || quantTag}" in "${repoId}". Available: ${ggufs.join(', ')}`,
+			);
+		}
+		const url = `https://huggingface.co/${repoId}/resolve/${revision}/${chosen}`;
+		return ensureCompanionModel(modelDir, path.basename(chosen), url);
 	}
 
 	if (fallbackFilename && fallbackUrl) {

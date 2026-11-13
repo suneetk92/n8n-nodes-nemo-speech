@@ -50,6 +50,12 @@ jobs:
             sed -i "s/add_library(nemo_speech_nmt_c SHARED/add_library(nemo_speech_nmt_c STATIC/" src/nmt/CMakeLists.txt
 
             # Static SentencePiece (required for a fully static binary).
+            # Build SentencePiece against the SYSTEM protobuf (same 3.21.x that ITN
+            # links) instead of its bundled protobuf-lite 3.14. Mixing both in one
+            # static binary (with --allow-multiple-definition) made the 3.21 runtime
+            # reject sentencepiece_model.pb.cc ("compiled against 3.14.0") the
+            # first time a SentencePiece-tokenized model (e.g. parakeet-ultra) loaded.
+            sed -i "s/-DSPM_ENABLE_TCMALLOC=OFF/-DSPM_ENABLE_TCMALLOC=OFF -DSPM_PROTOBUF_PROVIDER=package/" scripts/build_sentencepiece_static.sh
             PREFIX=/tmp/nemo-deps/sentencepiece bash scripts/build_sentencepiece_static.sh 2>&1 | tail -3
 
             # Static OpenFST + Sparrowhawk (ITN). The upstream script only
@@ -175,6 +181,12 @@ jobs:
             sed -i "s/add_library(nemo_speech_asr_c SHARED/add_library(nemo_speech_asr_c STATIC/" src/asr/CMakeLists.txt
             sed -i "s/add_library(nemo_speech_nmt SHARED/add_library(nemo_speech_nmt STATIC/" src/nmt/CMakeLists.txt
             sed -i "s/add_library(nemo_speech_nmt_c SHARED/add_library(nemo_speech_nmt_c STATIC/" src/nmt/CMakeLists.txt
+            # Build SentencePiece against the SYSTEM protobuf (same 3.21.x that ITN
+            # links) instead of its bundled protobuf-lite 3.14. Mixing both in one
+            # static binary (with --allow-multiple-definition) made the 3.21 runtime
+            # reject sentencepiece_model.pb.cc ("compiled against 3.14.0") the
+            # first time a SentencePiece-tokenized model (e.g. parakeet-ultra) loaded.
+            sed -i "s/-DSPM_ENABLE_TCMALLOC=OFF/-DSPM_ENABLE_TCMALLOC=OFF -DSPM_PROTOBUF_PROVIDER=package/" scripts/build_sentencepiece_static.sh
             PREFIX=/tmp/nemo-deps/sentencepiece bash scripts/build_sentencepiece_static.sh 2>&1 | tail -3
 
             git apply /patches/static-itn-build.patch
