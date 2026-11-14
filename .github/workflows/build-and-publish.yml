@@ -94,6 +94,7 @@ jobs:
               -DBUILD_SHARED_LIBS=OFF \
               -DCMAKE_POSITION_INDEPENDENT_CODE=OFF \
               -DCMAKE_EXE_LINKER_FLAGS="-static -Wl,--allow-multiple-definition" \
+              -DCMAKE_CXX_STANDARD_LIBRARIES="/usr/lib/x86_64-linux-gnu/libprotobuf.a -lpthread" \
               -DGGML_OPENMP=OFF 2>&1 | tail -15
             cmake --build . -j$(nproc) 2>&1 | tail -10
             cp bin/nemo-speech /out/linux-x64/
@@ -216,6 +217,7 @@ jobs:
               -DBUILD_SHARED_LIBS=OFF \
               -DCMAKE_POSITION_INDEPENDENT_CODE=OFF \
               -DCMAKE_EXE_LINKER_FLAGS="-static -Wl,--allow-multiple-definition" \
+              -DCMAKE_CXX_STANDARD_LIBRARIES="/usr/lib/x86_64-linux-gnu/libprotobuf.a -lpthread" \
               -DGGML_OPENMP=OFF 2>&1 | tail -15
             cmake --build . -j$(nproc) 2>&1 | tail -10
             cp bin/nemo-speech /out/linux-x64/
