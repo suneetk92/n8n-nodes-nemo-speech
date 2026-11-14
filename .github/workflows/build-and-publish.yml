@@ -95,6 +95,10 @@ jobs:
               -DCMAKE_POSITION_INDEPENDENT_CODE=OFF \
               -DCMAKE_EXE_LINKER_FLAGS="-static -Wl,--allow-multiple-definition" \
               -DCMAKE_CXX_STANDARD_LIBRARIES="/usr/lib/x86_64-linux-gnu/libprotobuf.a -lpthread" \
+              -DGGML_NATIVE=OFF \
+              -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON \
+              -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF \
+              -DGGML_AMX_TILE=OFF -DGGML_AMX_INT8=OFF -DGGML_AMX_BF16=OFF \
               -DGGML_OPENMP=OFF 2>&1 | tail -15
             cmake --build . -j$(nproc) 2>&1 | tail -10
             cp bin/nemo-speech /out/linux-x64/
@@ -104,6 +108,14 @@ jobs:
             cp /tmp/nemo-speech-0.1.0-linux-x86_64-cpu/share/nemo-speech/model-index.json /out/linux-x64/
             rm -f /tmp/ns.tar.gz
             chmod +x /out/linux-x64/nemo-speech
+            # Portability guard: the binary must not contain AVX-512 (zmm) code, or it
+            # SIGILLs on consumer CPUs (e.g. Intel 12th gen) when built on an AVX-512 runner.
+            apt-get install -y -qq binutils >/dev/null 2>&1 || true
+            # glibc ships runtime-dispatched *_avx512_* memcpy/memset/strstr variants (chosen via
+            # cpuid, safe on non-AVX-512 CPUs); ignore those and fail on any other zmm use.
+            ZMM=$(objdump -d --no-show-raw-insn /out/linux-x64/nemo-speech | awk '"'"'/^[0-9a-f]+ <.*>:$/ {fn=$2} /%zmm/ && fn !~ /avx512|evex/ {n++} END {print n+0}'"'"')
+            echo "AVX-512 (zmm) instruction count: $ZMM"
+            [ "$ZMM" = "0" ] || { echo "ERROR: AVX-512 code present, build is not portable"; exit 1; }
           '
 
           # --- static ffmpeg (johnvansickle.com, genuinely static — zero
@@ -218,6 +230,10 @@ jobs:
               -DCMAKE_POSITION_INDEPENDENT_CODE=OFF \
               -DCMAKE_EXE_LINKER_FLAGS="-static -Wl,--allow-multiple-definition" \
               -DCMAKE_CXX_STANDARD_LIBRARIES="/usr/lib/x86_64-linux-gnu/libprotobuf.a -lpthread" \
+              -DGGML_NATIVE=OFF \
+              -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_BMI2=ON \
+              -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF \
+              -DGGML_AMX_TILE=OFF -DGGML_AMX_INT8=OFF -DGGML_AMX_BF16=OFF \
               -DGGML_OPENMP=OFF 2>&1 | tail -15
             cmake --build . -j$(nproc) 2>&1 | tail -10
             cp bin/nemo-speech /out/linux-x64/
@@ -226,6 +242,14 @@ jobs:
             cp /tmp/nemo-speech-0.1.0-linux-x86_64-cpu/share/nemo-speech/model-index.json /out/linux-x64/
             rm -f /tmp/ns.tar.gz
             chmod +x /out/linux-x64/nemo-speech
+            # Portability guard: the binary must not contain AVX-512 (zmm) code, or it
+            # SIGILLs on consumer CPUs (e.g. Intel 12th gen) when built on an AVX-512 runner.
+            apt-get install -y -qq binutils >/dev/null 2>&1 || true
+            # glibc ships runtime-dispatched *_avx512_* memcpy/memset/strstr variants (chosen via
+            # cpuid, safe on non-AVX-512 CPUs); ignore those and fail on any other zmm use.
+            ZMM=$(objdump -d --no-show-raw-insn /out/linux-x64/nemo-speech | awk '"'"'/^[0-9a-f]+ <.*>:$/ {fn=$2} /%zmm/ && fn !~ /avx512|evex/ {n++} END {print n+0}'"'"')
+            echo "AVX-512 (zmm) instruction count: $ZMM"
+            [ "$ZMM" = "0" ] || { echo "ERROR: AVX-512 code present, build is not portable"; exit 1; }
           '
 
           rm -rf /tmp/ffmpeg-extract && mkdir -p /tmp/ffmpeg-extract
